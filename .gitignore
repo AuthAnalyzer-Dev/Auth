@@ -1,0 +1,120 @@
+# -----------------------------
+# Java build artifacts & temp
+# -----------------------------
+*.class
+*.log
+*.tmp
+*.swp
+*.swo
+
+# JVM crash logs
+hs_err_pid*
+replay_pid*
+
+# Archives produced by builds (不建议提交)
+*.jar
+*.war
+*.ear
+*.nar
+*.zip
+*.tar.gz
+*.rar
+
+# -----------------------------
+# Maven
+# -----------------------------
+target/
+**/target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+# Maven Wrapper（需要提交 wrapper JAR）
+!.mvn/wrapper/maven-wrapper.jar
+!**/maven-wrapper.jar
+
+# -----------------------------
+# Gradle
+# -----------------------------
+.gradle/
+**/.gradle/
+build/
+**/build/
+# Gradle Wrapper（需要提交 wrapper JAR）
+!gradle/wrapper/gradle-wrapper.jar
+!**/gradle-wrapper.jar
+
+# -----------------------------
+# Testing & coverage reports
+# -----------------------------
+surefire-reports/
+failsafe-reports/
+.test-results/
+.jacoco/
+jacoco.exec
+coverage/
+**/coverage/
+
+# -----------------------------
+# IDEs
+# -----------------------------
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+**/out/
+
+# Eclipse
+.project
+.classpath
+.settings/
+.bin/
+**/.settings/
+**/bin/
+
+# NetBeans
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# VS Code
+.vscode/
+
+# -----------------------------
+# OS cruft
+# -----------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.fuse_hidden*
+
+# -----------------------------
+# Env & secrets（可按需开启）
+# 如果你项目使用 .env，请取消注释下面三行
+# .env
+# .env.*
+# !.env.example
+
+# 常见密钥/证书（一般不应提交）
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
