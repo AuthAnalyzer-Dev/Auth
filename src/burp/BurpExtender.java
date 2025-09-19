@@ -13,6 +13,8 @@ import com.protect7.authanalyzer.util.DataStorageProvider;
 import com.protect7.authanalyzer.util.GenericHelper;
 import com.protect7.authanalyzer.util.Globals;
 
+import com.protect7.authanalyzer.gui.UITesting.UITestingPanel; // ADDED
+
 public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListener {
 
 	public static MainPanel mainPanel;
@@ -25,6 +27,13 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 		BurpExtender.callbacks = callbacks;
 		callbacks.setExtensionName(Globals.EXTENSION_NAME);
 		mainPanel = new MainPanel();
+
+		// ADDED START
+		burpTabbedPane = new JTabbedPane();
+		burpTabbedPane.addTab("Analyzer", mainPanel);
+		burpTabbedPane.addTab("UI Testing", new UITestingPanel());
+		// ADDED END
+
 		callbacks.addSuiteTab(this);
 		addAuthAnalyzerMenu();
 		HttpListener httpListener = new HttpListener();
@@ -43,12 +52,12 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 
 	@Override
 	public Component getUiComponent() {
-		return mainPanel;
+		return (burpTabbedPane != null) ? burpTabbedPane : mainPanel; // ADDED (uses burpTabbedPane if present)
 	}
-	
+
 	private void addAuthAnalyzerMenu() {
 		SwingUtilities.invokeLater(new Runnable() {
-			
+
 			@Override
 			public void run() {
 				JFrame burpFrame = GenericHelper.getBurpFrame();
