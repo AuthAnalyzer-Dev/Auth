@@ -1,0 +1,121 @@
+package com.protect7.authanalyzer.gui.UITesting;
+
+import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
+import com.protect7.authanalyzer.entities.OriginalRequestResponse;
+import burp.BurpExtender;
+import burp.IHttpRequestResponse;
+import burp.IResponseInfo;
+
+import javax.swing.*;
+import java.awt.*;
+import java.util.Arrays;
+
+class DetailPanel extends JPanel {
+
+    private final JTabbedPane rootTabs   = new JTabbedPane();       // Original | Session | Log
+    private final JTabbedPane originalTP = new JTabbedPane();       // Request | Response
+    private final JTabbedPane sessionTP  = new JTabbedPane();       // Request | Response
+
+    private final JTextArea originalReq  = monoArea();
+    private final JTextArea originalResp = monoArea();
+    private final JTextArea sessionReq   = monoArea();
+    private final JTextArea sessionResp  = monoArea();
+    private final JTextArea logArea      = monoArea();
+
+    DetailPanel() {
+        setLayout(new BorderLayout());
+
+        originalTP.addTab("Request", new JScrollPane(originalReq));
+        originalTP.addTab("Response", new JScrollPane(originalResp));
+        sessionTP.addTab("Request", new JScrollPane(sessionReq));
+        sessionTP.addTab("Response", new JScrollPane(sessionResp));
+
+        rootTabs.addTab("Original", originalTP);
+        rootTabs.addTab("Session", sessionTP);
+        rootTabs.addTab("Log", new JScrollPane(logArea));
+
+        add(rootTabs, BorderLayout.CENTER);
+    }
+
+    void setSessionTabTitle(String name) {
+        int idx = rootTabs.indexOfComponent(sessionTP);
+        if (idx >= 0) rootTabs.setTitleAt(idx, name);
+    }
+
+    void showOriginal(OriginalRequestResponse orr) {
+        try {
+            if (orr == null || orr.getRequestResponse() == null) {
+                originalReq.setText("[no original request]");
+                originalResp.setText("[no original response]");
+                return;
+            }
+            IHttpRequestResponse rr = orr.getRequestResponse();
+
+            String req = rr.getRequest()!=null
+                    ? BurpExtender.callbacks.getHelpers().bytesToString(rr.getRequest())
+                    : "[no request]";
+            originalReq.setText(req);
+            originalReq.setCaretPosition(0);
+
+            String respTxt = "[no response]";
+            if (rr.getResponse() != null) {
+                byte[] resp = rr.getResponse();
+                IResponseInfo ri = BurpExtender.callbacks.getHelpers().analyzeResponse(resp);
+                String head = String.join("\r\n", ri.getHeaders());
+                String body = BurpExtender.callbacks.getHelpers().bytesToString(
+                        Arrays.copyOfRange(resp, ri.getBodyOffset(), resp.length));
+                respTxt = head + "\r\n\r\n" + body;
+            }
+            originalResp.setText(respTxt);
+            originalResp.setCaretPosition(0);
+        } catch (Throwable t) {
+            originalReq.setText("[failed to render original: " + t.getMessage() + "]");
+            originalResp.setText("");
+        }
+    }
+
+    void showSession(AnalyzerRequestResponse arr) {
+        try {
+            if (arr == null || arr.getRequestResponse() == null) {
+                sessionReq.setText("[no replay for selected session]");
+                sessionResp.setText("");
+                return;
+            }
+            IHttpRequestResponse rr = arr.getRequestResponse();
+
+            String req = rr.getRequest()!=null
+                    ? BurpExtender.callbacks.getHelpers().bytesToString(rr.getRequest())
+                    : "[no request]";
+            sessionReq.setText(req);
+            sessionReq.setCaretPosition(0);
+
+            String respTxt = "[no response]";
+            if (rr.getResponse() != null) {
+                byte[] resp = rr.getResponse();
+                IResponseInfo ri = BurpExtender.callbacks.getHelpers().analyzeResponse(resp);
+                String head = String.join("\r\n", ri.getHeaders());
+                String body = BurpExtender.callbacks.getHelpers().bytesToString(
+                        Arrays.copyOfRange(resp, ri.getBodyOffset(), resp.length));
+                respTxt = head + "\r\n\r\n" + body;
+            }
+            sessionResp.setText(respTxt);
+            sessionResp.setCaretPosition(0);
+        } catch (Throwable t) {
+            sessionReq.setText("[failed to render session replay: " + t.getMessage() + "]");
+            sessionResp.setText("");
+        }
+    }
+
+    void appendLog(String msg) {
+        logArea.append(msg + "\n");
+        logArea.setCaretPosition(logArea.getDocument().getLength());
+    }
+
+    private static JTextArea monoArea() {
+        JTextArea ta = new JTextArea();
+        ta.setEditable(false);
+        ta.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        ta.setLineWrap(false);
+        return ta;
+    }
+}
