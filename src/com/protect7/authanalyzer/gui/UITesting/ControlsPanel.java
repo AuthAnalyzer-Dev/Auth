@@ -7,15 +7,18 @@ import java.util.List;
 
 class ControlsPanel extends JPanel {
 
-    private final JTextField baseUrlField = new JTextField("https://v.ruc.edu.cn/", 28);
+    private final JTextField baseUrlField   = new JTextField("https://v.ruc.edu.cn/", 28);
     private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 28);
-    private final JTextField tiupUidField = new JTextField("", 28);
-    private final JTextField sessionField = new JTextField("", 28);
+    private final JTextField tiupUidField   = new JTextField("", 28);
+    private final JTextField sessionField   = new JTextField("", 28);
 
-    private final JButton startAutomationBtn = new JButton("启动自动化任务");
-    private final JButton startDriverBtn = new JButton("启动代理 Driver");
-    private final JButton crawlClickBtn = new JButton("抓取并点击页面链接");
-    private final JButton clearLogBtn = new JButton("清空日志");
+    private final JButton startAutomationBtn   = new JButton("启动自动化任务");
+    private final JButton startDriverBtn       = new JButton("启动代理 Driver");
+    private final JButton crawlClickBtn        = new JButton("抓取并点击页面链接");
+    private final JButton replayForSessionBtn  = new JButton("在选定 Session 上重放");
+    private final JButton mirrorModeBtn        = new JButton("启动镜像模式");
+    private final JButton dualDetectionBtn     = new JButton("启动双重检测");
+    private final JButton clearLogBtn          = new JButton("清空日志");
 
     private final JComboBox<String> sessionChooser = new JComboBox<>();
 
@@ -49,6 +52,9 @@ class ControlsPanel extends JPanel {
         buttons.add(crawlClickBtn);
         buttons.add(new JLabel("Session:"));
         buttons.add(sessionChooser);
+        buttons.add(replayForSessionBtn); // 新增按钮
+        buttons.add(mirrorModeBtn); // 镜像模式按钮
+        buttons.add(dualDetectionBtn); // 双重检测按钮
         buttons.add(clearLogBtn);
 
         add(form, BorderLayout.CENTER);
@@ -57,13 +63,14 @@ class ControlsPanel extends JPanel {
     }
 
     /* --- 对外API（主面板来读/写/监听） --- */
-    String getBaseUrl()   { return baseUrlField.getText(); }
-    String getTargetUrl() { return targetUrlField.getText(); }
-    String getTiupUid()   { return tiupUidField.getText(); }
-    String getSessionStr(){ return sessionField.getText(); }
+    String getBaseUrl()    { return baseUrlField.getText(); }
+    String getTargetUrl()  { return targetUrlField.getText(); }
+    String getTiupUid()    { return tiupUidField.getText(); }
+    String getSessionStr() { return sessionField.getText(); }
 
     void setDriverButtonText(String txt) { startDriverBtn.setText(txt); }
-    void setCrawlEnabled(boolean b) { crawlClickBtn.setEnabled(b); }
+    void setMirrorButtonText(String txt) { mirrorModeBtn.setText(txt); }
+    void setCrawlEnabled(boolean b)      { crawlClickBtn.setEnabled(b); }
 
     void setSessions(List<String> names) {
         sessionChooser.removeAllItems();
@@ -82,9 +89,12 @@ class ControlsPanel extends JPanel {
         return o == null ? "(no session)" : o.toString();
     }
 
-    void onStartAutomation(ActionListener l) { startAutomationBtn.addActionListener(l); }
-    void onToggleDriver(ActionListener l)    { startDriverBtn.addActionListener(l); }
-    void onCrawl(ActionListener l)           { crawlClickBtn.addActionListener(l); }
-    void onSessionChanged(ActionListener l)  { sessionChooser.addActionListener(l); }
-    void onClearLog(ActionListener l)        { clearLogBtn.addActionListener(l); }
+    void onStartAutomation(ActionListener l)   { startAutomationBtn.addActionListener(l); }
+    void onToggleDriver(ActionListener l)      { startDriverBtn.addActionListener(l); }
+    void onCrawl(ActionListener l)             { crawlClickBtn.addActionListener(l); }
+    void onSessionChanged(ActionListener l)    { sessionChooser.addActionListener(l); }
+    void onClearLog(ActionListener l)          { clearLogBtn.addActionListener(l); }
+    void onReplayForSession(ActionListener l)  { replayForSessionBtn.addActionListener(l); } // 新增对外回调
+    void onMirrorMode(ActionListener l)        { mirrorModeBtn.addActionListener(l); } // 镜像模式回调
+    void onDualDetection(ActionListener l)     { dualDetectionBtn.addActionListener(l); } // 双重检测回调
 }
