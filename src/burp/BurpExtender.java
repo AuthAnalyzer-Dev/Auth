@@ -26,23 +26,28 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 	public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
 		BurpExtender.callbacks = callbacks;
 		callbacks.setExtensionName(Globals.EXTENSION_NAME);
-		mainPanel = new MainPanel();
+		try {
+			mainPanel = new MainPanel();
 
-		// ADDED START
-		burpTabbedPane = new JTabbedPane();
-		burpTabbedPane.addTab("Analyzer", mainPanel);
-		burpTabbedPane.addTab("UI Testing", new UITestingPanel());
-		// ADDED END
+			// ADDED START
+			burpTabbedPane = new JTabbedPane();
+			burpTabbedPane.addTab("Analyzer", mainPanel);
+			burpTabbedPane.addTab("UI Testing", new UITestingPanel());
+			// ADDED END
 
-		callbacks.addSuiteTab(this);
-		addAuthAnalyzerMenu();
-		HttpListener httpListener = new HttpListener();
-		callbacks.registerHttpListener(httpListener);
-		callbacks.registerProxyListener(httpListener);
-		callbacks.registerExtensionStateListener(this);
-		callbacks.printOutput(Globals.EXTENSION_NAME + " successfully started");
-		callbacks.printOutput("Version " + Globals.VERSION);
-		callbacks.printOutput("Created by zmlad");
+			callbacks.addSuiteTab(this);
+			addAuthAnalyzerMenu();
+			HttpListener httpListener = new HttpListener();
+			callbacks.registerHttpListener(httpListener);
+			callbacks.registerProxyListener(httpListener);
+			callbacks.registerExtensionStateListener(this);
+			callbacks.printOutput(Globals.EXTENSION_NAME + " successfully started");
+			callbacks.printOutput("Version " + Globals.VERSION);
+			callbacks.printOutput("Created by zmlad");
+		} catch (Exception e) {
+			callbacks.printError("Auth Analyzer failed to load: " + e.getMessage());
+			e.printStackTrace();
+		}
 	}
 
 	@Override
@@ -76,12 +81,13 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 		if(authAnalyzerMenu != null && authAnalyzerMenu.getParent() != null) {
 			authAnalyzerMenu.getParent().remove(authAnalyzerMenu);
 		}
-		try {
-			mainPanel.getConfigurationPanel().createSessionObjects(false);
-			DataStorageProvider.saveSetup();
-		}
-		catch (Exception e) {
-			callbacks.printOutput("INFO: Session Setup not stored due to invalid data.");
+		if (mainPanel != null) {
+			try {
+				mainPanel.getConfigurationPanel().createSessionObjects(false);
+				DataStorageProvider.saveSetup();
+			} catch (Exception e) {
+				callbacks.printOutput("INFO: Session Setup not stored due to invalid data.");
+			}
 		}
 	}
 }
