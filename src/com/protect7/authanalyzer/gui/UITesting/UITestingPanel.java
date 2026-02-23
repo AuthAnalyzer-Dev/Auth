@@ -5,10 +5,10 @@ import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.gui.util.RequestTableModel;
 import com.protect7.authanalyzer.uitesting.runner.ProxyDriverManager;
-import com.protect7.authanalyzer.uitesting.runner.UITestRunner;
 import com.protect7.authanalyzer.util.CurrentConfig;
 import burp.BurpExtender;
 import org.openqa.selenium.By;
+import org.openqa.selenium.Cookie;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
@@ -69,8 +69,6 @@ public class UITestingPanel extends JPanel {
     }
 
     private void wireEvents() {
-        controls.onStartAutomation(this::onStartAutomation);
-        controls.onToggleDriver(this::onToggleDriver);
         controls.onCrawl(this::onCrawlClick);
         controls.onSessionChanged(e -> {
             details.setSessionTabTitle(controls.getSelectedSessionName());
@@ -87,60 +85,44 @@ public class UITestingPanel extends JPanel {
 
     /* ================= 主动作 ================= */
 
-    private void onStartAutomation(ActionEvent e) {
-        ((JButton)e.getSource()).setEnabled(false);
-        new Thread(() -> {
-            try {
-                log("[Run] 自动化任务开始");
-                UITestRunner.run(controls.getBaseUrl(), controls.getTargetUrl(),
-                        controls.getTiupUid(), controls.getSessionStr(), stdout, stderr);
-                SwingUtilities.invokeLater(() ->
-                        JOptionPane.showMessageDialog(this, "自动化任务完成！", "任务完成", JOptionPane.INFORMATION_MESSAGE));
-            } catch (Exception ex) {
-                log("[Run] 出错: " + ex.getMessage());
-                ex.printStackTrace(stderr);
-            } finally {
-                SwingUtilities.invokeLater(() -> ((JButton)e.getSource()).setEnabled(true));
-            }
-        }, "UITestRunner-Thread").start();
-    }
-
-    private void onToggleDriver(ActionEvent e) {
-        JButton btn = (JButton)e.getSource();
-        btn.setEnabled(false);
-        new Thread(() -> {
-            try {
-                if (ProxyDriverManager.getDriver() == null) {
-                    log("[Driver] Starting with proxy " + PROXY_HOST + ":" + PROXY_PORT);
-                    ProxyDriverManager.startDriver(true, PROXY_HOST, PROXY_PORT, false);
-                    SwingUtilities.invokeLater(() -> {
-                        controls.setDriverButtonText("停止代理 Driver");
-                        controls.setCrawlEnabled(true);
-                    });
-                    log("[Driver] Started");
-                } else {
-                    log("[Driver] Stopping...");
-                    ProxyDriverManager.stopDriver();
-                    SwingUtilities.invokeLater(() -> {
-                        controls.setDriverButtonText("启动代理 Driver");
-                        controls.setCrawlEnabled(false);
-                    });
-                    log("[Driver] Stopped");
-                }
-            } catch (Exception ex) {
-                log("[Driver] Error: " + ex.getMessage());
-                ex.printStackTrace(stderr);
-            } finally {
-                SwingUtilities.invokeLater(() -> btn.setEnabled(true));
-            }
-        }, "Driver-Toggle-Thread").start();
-    }
-
     private void onCrawlClick(ActionEvent e) {
         new Thread(() -> {
-            WebDriver driver = ProxyDriverManager.getDriver();
-            if (driver == null) { log("Driver 未启动"); return; }
             try {
+                WebDriver driver = ProxyDriverManager.getOrStartDriver(true, PROXY_HOST, PROXY_PORT, false);
+                String targetPage = controls.getTargetUrl();
+                if (targetPage == null || targetPage.trim().isEmpty()) {
+                    log("[Crawl] 请先配置 Target URL");
+                    return;
+                }
+
+                log("[Crawl] 导航至目标页面并设置 Cookie...");
+                driver.get(targetPage);
+                Thread.sleep(500);
+
+                String tiupUid = controls.getTiupUid();
+                String session = controls.getSessionStr();
+                if (tiupUid != null && !tiupUid.trim().isEmpty() || session != null && !session.trim().isEmpty()) {
+                    String domain = getDomainFromUrl(targetPage);
+                    if (domain != null) {
+                        try {
+                            if (tiupUid != null && !tiupUid.trim().isEmpty()) {
+                                driver.manage().addCookie(new Cookie.Builder("tiup_uid", tiupUid.trim())
+                                        .domain(domain).path("/").build());
+                                log("[Crawl] 已设置 tiup_uid Cookie");
+                            }
+                            if (session != null && !session.trim().isEmpty()) {
+                                driver.manage().addCookie(new Cookie.Builder("session", session.trim())
+                                        .domain(domain).path("/").build());
+                                log("[Crawl] 已设置 session Cookie");
+                            }
+                            driver.get(targetPage);
+                            Thread.sleep(500);
+                        } catch (Exception cex) {
+                            log("[Crawl] 设置 Cookie 失败: " + cex.getMessage());
+                        }
+                    }
+                }
+
                 log("[Crawl] 抓取并点击...");
                 Thread.sleep(300);
 
@@ -161,10 +143,7 @@ public class UITestingPanel extends JPanel {
                 }
                 log("[Crawl] 候选: " + clickable.size());
 
-                String targetPage = controls.getTargetUrl();
-                if (targetPage == null || targetPage.trim().isEmpty()) targetPage = driver.getCurrentUrl();
-
-                Set<String> visited = new HashSet<String>();
+                Set<String> visited = new HashSet<>();
                 for (Map.Entry<String, WebElement> ent : clickable.entrySet()) {
                     String key = ent.getKey();
                     if (!visited.add(key)) continue;
@@ -272,6 +251,15 @@ public class UITestingPanel extends JPanel {
     }
 
     /* ================= 小工具 ================= */
+
+    private static String getDomainFromUrl(String url) {
+        if (url == null) return null;
+        String tmp = url.toLowerCase().replaceAll("https?://", "");
+        int slash = tmp.indexOf('/');
+        String host = slash >= 0 ? tmp.substring(0, slash) : tmp;
+        int colon = host.indexOf(':');
+        return colon >= 0 ? host.substring(0, colon) : host;
+    }
 
     private void log(String msg) {
         stdout.println(msg);

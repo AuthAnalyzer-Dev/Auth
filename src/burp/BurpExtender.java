@@ -26,7 +26,7 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 	public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
 		BurpExtender.callbacks = callbacks;
 		callbacks.setExtensionName(Globals.EXTENSION_NAME);
-		try {
+		try {//ADDED
 			mainPanel = new MainPanel();
 
 			// ADDED START
@@ -81,7 +81,7 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 		if(authAnalyzerMenu != null && authAnalyzerMenu.getParent() != null) {
 			authAnalyzerMenu.getParent().remove(authAnalyzerMenu);
 		}
-		if (mainPanel != null) {
+		if (mainPanel != null) {//ADDED
 			try {
 				mainPanel.getConfigurationPanel().createSessionObjects(false);
 				DataStorageProvider.saveSetup();

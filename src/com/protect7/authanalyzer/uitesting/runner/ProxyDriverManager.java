@@ -48,6 +48,14 @@ public class ProxyDriverManager {
         return driver;
     }
 
+    /** Returns the driver, starting it with given config if not yet started. */
+    public static synchronized WebDriver getOrStartDriver(boolean useProxy, String proxyHost, int proxyPort, boolean headless) {
+        if (driver == null) {
+            startDriver(useProxy, proxyHost, proxyPort, headless);
+        }
+        return driver;
+    }
+
     public static synchronized void stopDriver() {
         try {
             if (driver != null) {
