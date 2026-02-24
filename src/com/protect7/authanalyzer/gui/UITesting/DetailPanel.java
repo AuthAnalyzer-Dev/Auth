@@ -40,15 +40,7 @@ class DetailPanel extends JPanel {
 
         rootTabs.addTab("Original", originalTP);
         rootTabs.addTab("Session", sessionTP);
-
-        JPanel logPanel = new JPanel(new BorderLayout());
-        JButton clearLogBtn = new JButton("清空日志");
-        clearLogBtn.addActionListener(e -> clearLog());
-        JPanel logToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
-        logToolbar.add(clearLogBtn);
-        logPanel.add(logToolbar, BorderLayout.NORTH);
-        logPanel.add(new JScrollPane(logArea), BorderLayout.CENTER);
-        rootTabs.addTab("Log", logPanel);
+        rootTabs.addTab("Log", new JScrollPane(logArea));
 
         add(rootTabs, BorderLayout.CENTER);
     }

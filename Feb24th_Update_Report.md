@@ -19,6 +19,11 @@
 | 修复 | Cookie 无法登录：`isSecure(true)`、清除旧 Cookie、新增 access_token（父域 .ruc.edu.cn） |
 | 修复 | 清空表格失灵：在 EDT 上执行 clearTable，Analyzer 运行时避免后台线程更新 UI |
 | 修复 | 抓取允许点击登出（捕获登出 API 漏洞），每次返回 target 前重新注入 Cookie 以恢复登录 |
+| 修复 | 清空日志：由 appendLog 改为真正清空（clearLog） |
+| 新增 | 清空表格按钮，与 Analyzer Clear Table 一致 |
+| 修复 | invalid session id：ensureValidDriver、异常时 stopDriver 并重启 |
+| 体验 | 表格着色：SAME/SIMILAR/DIFFERENT 与 Analyzer 一致（BypassCellRenderer） |
+| 体验 | 清空日志按钮位置：抓取|清空日志|清空表格|Session |
 
 ---
 
@@ -181,3 +186,37 @@
 | 查找元素 | `findClickableByKey` | 294-305 |
 | 查找链接 | `findAnchorByKey` | 307-323 |
 | 查找按钮 | `findButtonByKey` | 325-338 |
+
+---
+
+## 六、补充更新（UI 与体验）
+
+### 6.1 清空日志修复
+
+- **问题**：点击「清空日志」实际执行 `appendLog("[Log cleared]")`，仅追加文字，未清空。
+- **修复**：`DetailPanel` 新增 `clearLog()`，调用 `logArea.setText("")` 真正清空；`onClearLog` 改为调用 `details.clearLog()`。
+
+### 6.2 清空表格按钮
+
+- **新增**：`ControlsPanel` 增加「清空表格」按钮。
+- **逻辑**：调用 `BurpExtender.mainPanel.getCenterPanel().clearTable()`，与 Analyzer 的 Clear Table 一致；清空 `RequestTableModel` 和 Session 的请求响应映射。
+- **线程**：Analyzer 运行时在 executor 中执行，避免 EDT 与后台线程冲突。
+
+### 6.3 invalid session id 处理
+
+- **问题**：用户关闭 Chrome 后，`ProxyDriverManager` 仍持有旧 driver，再次抓取会报 `invalid session id`。
+- **修复**：
+  - `ensureValidDriver()`：抓取前调用 `getWindowHandles()` 检测会话；若无效则 `stopDriver()` 并重启。
+  - `onCrawlClick` 中 catch `WebDriverException`，若 `getMessage()` 含 `invalid session id` 则 `stopDriver()` 并重启。
+- **使用指南**：新增 Q4 说明该错误及处理方式。
+
+### 6.4 表格着色（与 Analyzer 一致）
+
+- **文件**：`RequestTablePanel.java`
+- **修改**：为 `JTable` 设置 `BypassCellRenderer`（与 Analyzer 相同）。
+- **着色**：SAME 红、SIMILAR 橙、DIFFERENT 绿、Marked 行黄。
+
+### 6.5 清空日志按钮位置
+
+- **位置**：按钮顺序调整为 `抓取|清空日志|清空表格|Session`，`清空日志` 紧跟抓取按钮，便于发现。
+- **移除**：曾于 Log 标签内添加清空按钮，后移除，仅保留控制栏中的「清空日志」。
