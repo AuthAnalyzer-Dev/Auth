@@ -18,6 +18,7 @@
 | 修复 | 大量标签页：`target="_blank"` 链接在点击前移除，改为当前标签页打开 |
 | 修复 | Cookie 无法登录：`isSecure(true)`、清除旧 Cookie、新增 access_token（父域 .ruc.edu.cn） |
 | 修复 | 清空表格失灵：在 EDT 上执行 clearTable，Analyzer 运行时避免后台线程更新 UI |
+| 修复 | 抓取允许点击登出（捕获登出 API 漏洞），每次返回 target 前重新注入 Cookie 以恢复登录 |
 
 ---
 
@@ -95,7 +96,13 @@
 - **根因 3**：微人大等站点有 `access_token` Cookie，域为 `.ruc.edu.cn`（父域），原逻辑未支持；缺少该 Cookie 导致无法登录。
 - **修复**：`Cookie.Builder.isSecure(isHttps)`；设置前 `deleteAllCookies()`；新增 `access_token` 输入框，使用父域 `.ruc.edu.cn` 设置。
 
-**2.1.8 其他改动**
+**2.1.8 允许点击登出并恢复登录**
+
+- **需求**：允许点击登出链接以捕获登出 API 中的漏洞，同时确保能继续抓取。
+- **方案**：仅当本次点击为登出时，在 `driver.get(targetPage)` 前调用 `applyCookies()`；否则直接 `driver.get`，避免每次迭代都 applyCookies 过慢。
+- **实现**：`isLogoutKey(key)` 判断；`clickedLogout` 标志；finally 中 `if (clickedLogout) applyCookies(...)`。
+
+**2.1.9 其他改动**
 
 - 点击前执行 `scrollIntoView({block:'center'})`，确保元素在视口内。
 - 移除冗余 `visited` 集合（`LinkedHashMap` 已按 key 去重）。

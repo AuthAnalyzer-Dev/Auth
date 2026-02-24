@@ -109,49 +109,9 @@ public class UITestingPanel extends JPanel {
                 log("[Crawl] 导航至目标页面并设置 Cookie...");
                 driver.get(targetPage);
                 Thread.sleep(500);
-
-                String accessToken = controls.getAccessToken();
-                String tiupUid = controls.getTiupUid();
-                String session = controls.getSessionStr();
-                boolean hasAnyCookie = (accessToken != null && !accessToken.trim().isEmpty())
-                        || (tiupUid != null && !tiupUid.trim().isEmpty())
-                        || (session != null && !session.trim().isEmpty());
-                if (hasAnyCookie) {
-                    String domain = getDomainFromUrl(targetPage);
-                    String parentDomain = getParentDomain(domain);
-                    if (domain != null) {
-                        try {
-                            driver.manage().deleteAllCookies();
-                            log("[Crawl] 已清除旧 Cookie");
-                            boolean isHttps = targetPage.trim().toLowerCase().startsWith("https");
-                            if (accessToken != null && !accessToken.trim().isEmpty() && parentDomain != null) {
-                                Cookie c = new Cookie.Builder("access_token", accessToken.trim())
-                                        .domain(parentDomain).path("/")
-                                        .isSecure(isHttps).build();
-                                driver.manage().addCookie(c);
-                                log("[Crawl] 已设置 access_token Cookie (域 " + parentDomain + ")");
-                            }
-                            if (tiupUid != null && !tiupUid.trim().isEmpty()) {
-                                Cookie c = new Cookie.Builder("tiup_uid", tiupUid.trim())
-                                        .domain(domain).path("/")
-                                        .isSecure(isHttps).build();
-                                driver.manage().addCookie(c);
-                                log("[Crawl] 已设置 tiup_uid Cookie");
-                            }
-                            if (session != null && !session.trim().isEmpty()) {
-                                Cookie c = new Cookie.Builder("session", session.trim())
-                                        .domain(domain).path("/")
-                                        .isSecure(isHttps).build();
-                                driver.manage().addCookie(c);
-                                log("[Crawl] 已设置 session Cookie");
-                            }
-                            driver.get(targetPage);
-                            Thread.sleep(500);
-                        } catch (Exception cex) {
-                            log("[Crawl] 设置 Cookie 失败: " + cex.getMessage());
-                        }
-                    }
-                }
+                applyCookies(driver, targetPage, true);  // logOnApply=true 仅初始时打日志
+                driver.get(targetPage);
+                Thread.sleep(500);
 
                 log("[Crawl] 抓取并点击...");
                 Thread.sleep(300);
@@ -164,8 +124,9 @@ public class UITestingPanel extends JPanel {
                 collectClickableKeys(driver, targetDomain, clickableKeys);
                 log("[Crawl] 候选: " + clickableKeys.size());
 
-                // 第二轮：每次点击后必须回到 target，否则会在新页面上查找（key 来自 target 页，会大量未找到）
+                // 第二轮：每次点击后必须回到 target；仅点击登出时重新注入 Cookie，避免每次迭代都 applyCookies 过慢
                 for (String key : clickableKeys.keySet()) {
+                    boolean clickedLogout = false;
                     try {
                         log("[Crawl] 点击: " + key);
                         WebElement el = null;
@@ -177,6 +138,7 @@ public class UITestingPanel extends JPanel {
                             log("[Crawl] 未找到元素: " + key);
                             continue;
                         }
+                        clickedLogout = isLogoutKey(key);
                         try {
                             ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", el);
                             Thread.sleep(100);
@@ -186,9 +148,9 @@ public class UITestingPanel extends JPanel {
                     } catch (Throwable t) {
                         log("[Crawl] 点击失败: " + key + " -> " + t.getMessage());
                     } finally {
-                        // 无论成功/失败/未找到，每次迭代结束都回到 target，避免在新页面上查找
                         if (targetPage != null && !targetPage.isEmpty()) {
                             try {
+                                if (clickedLogout) applyCookies(driver, targetPage);
                                 driver.get(targetPage);
                                 waitForPageReady(driver);
                                 Thread.sleep(RETURN_PAGE_WAIT_MS);
@@ -249,10 +211,57 @@ public class UITestingPanel extends JPanel {
         } catch (Throwable ignore) {}
     }
 
+    /** key 是否为登出类（用于判断是否需重新注入 Cookie） */
+    private boolean isLogoutKey(String key) {
+        if (key == null) return false;
+        String k = key.toLowerCase();
+        return k.contains("退出") || k.contains("登出") || k.contains("注销")
+                || k.contains("log out") || k.contains("logout")
+                || k.contains("sign out") || k.contains("signout")
+                || k.contains("/logout") || k.contains("/signout");
+    }
+
+    /** 注入 Cookie（access_token/tiup_uid/session），用于初始登录及点击登出后恢复登录 */
+    private void applyCookies(WebDriver driver, String targetPage, boolean logOnApply) {
+        String accessToken = controls.getAccessToken();
+        String tiupUid = controls.getTiupUid();
+        String session = controls.getSessionStr();
+        boolean hasAny = (accessToken != null && !accessToken.trim().isEmpty())
+                || (tiupUid != null && !tiupUid.trim().isEmpty())
+                || (session != null && !session.trim().isEmpty());
+        if (!hasAny) return;
+        String domain = getDomainFromUrl(targetPage);
+        String parentDomain = getParentDomain(domain);
+        if (domain == null) return;
+        try {
+            driver.manage().deleteAllCookies();
+            boolean isHttps = targetPage != null && targetPage.trim().toLowerCase().startsWith("https");
+            if (accessToken != null && !accessToken.trim().isEmpty() && parentDomain != null) {
+                driver.manage().addCookie(new Cookie.Builder("access_token", accessToken.trim())
+                        .domain(parentDomain).path("/").isSecure(isHttps).build());
+            }
+            if (tiupUid != null && !tiupUid.trim().isEmpty()) {
+                driver.manage().addCookie(new Cookie.Builder("tiup_uid", tiupUid.trim())
+                        .domain(domain).path("/").isSecure(isHttps).build());
+            }
+            if (session != null && !session.trim().isEmpty()) {
+                driver.manage().addCookie(new Cookie.Builder("session", session.trim())
+                        .domain(domain).path("/").isSecure(isHttps).build());
+            }
+            if (logOnApply) log("[Crawl] 已应用 Cookie");
+        } catch (Exception cex) {
+            log("[Crawl] 设置 Cookie 失败: " + cex.getMessage());
+        }
+    }
+
+    private void applyCookies(WebDriver driver, String targetPage) {
+        applyCookies(driver, targetPage, false);
+    }
+
     /** 越权检测：收集可点击元素 key，同域过滤，扩展 button/form submit。
-     *  包含隐藏元素（折叠区、非激活 tab 等），漏洞可能藏于其中。 */
+     *  包含隐藏元素、包含登出链接（点击登出后 applyCookies 会重新注入以恢复登录）。 */
     private void collectClickableKeys(WebDriver driver, String targetDomain, LinkedHashMap<String, Void> out) {
-        // <a> 链接：同域过滤；图标链接（text 短/疑似图标）优先用 href 作为 key，提高匹配稳定性
+        // <a> 链接：同域过滤；图标链接优先 href（不排除登出，可捕获登出 API 漏洞）
         List<WebElement> anchors = driver.findElements(By.xpath("//a"));
         for (WebElement a : anchors) {
             try {
@@ -267,7 +276,7 @@ public class UITestingPanel extends JPanel {
                 out.putIfAbsent("a|" + normalizeKey(keyPart), null);
             } catch (Throwable ignore) {}
         }
-        // <button> 及 input[type=submit/button]（不排除隐藏元素）
+        // <button> 及 input[type=submit/button]
         List<WebElement> buttons = driver.findElements(By.xpath("//button | //input[@type='submit' or @type='button']"));
         for (WebElement b : buttons) {
             try {
