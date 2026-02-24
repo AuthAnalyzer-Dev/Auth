@@ -1,7 +1,9 @@
 package com.protect7.authanalyzer.gui.UITesting;
 
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
+import com.protect7.authanalyzer.gui.util.BypassCellRenderer;
 import com.protect7.authanalyzer.gui.util.RequestTableModel;
+import com.protect7.authanalyzer.util.BypassConstants;
 
 import javax.swing.*;
 import javax.swing.event.ListSelectionListener;
@@ -17,6 +19,10 @@ class RequestTablePanel extends JPanel {
         table.setAutoCreateRowSorter(true);
         table.setFillsViewportHeight(true);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        BypassCellRenderer bypassRenderer = new BypassCellRenderer();
+        table.setDefaultRenderer(Integer.class, bypassRenderer);
+        table.setDefaultRenderer(String.class, bypassRenderer);
+        table.setDefaultRenderer(BypassConstants.class, bypassRenderer);
         add(new JScrollPane(table,
                 JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
                 JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED), BorderLayout.CENTER);

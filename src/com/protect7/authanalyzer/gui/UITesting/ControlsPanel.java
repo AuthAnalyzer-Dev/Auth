@@ -8,11 +8,13 @@ import java.util.List;
 class ControlsPanel extends JPanel {
 
     private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 28);
+    private final JTextField accessTokenField = new JTextField("", 28);
     private final JTextField tiupUidField = new JTextField("", 28);
     private final JTextField sessionField = new JTextField("", 28);
 
     private final JButton crawlClickBtn = new JButton("抓取并点击页面链接");
     private final JButton clearLogBtn = new JButton("清空日志");
+    private final JButton clearTableBtn = new JButton("清空表格");
 
     private final JComboBox<String> sessionChooser = new JComboBox<>();
 
@@ -28,6 +30,9 @@ class ControlsPanel extends JPanel {
         gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("Target URL:"), gbc);
         gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(targetUrlField, gbc);
 
+        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("access_token Cookie (域 .ruc.edu.cn):"), gbc);
+        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(accessTokenField, gbc);
+
         gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("tiup_uid Cookie:"), gbc);
         gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(tiupUidField, gbc);
 
@@ -38,9 +43,10 @@ class ControlsPanel extends JPanel {
         sessionChooser.setPrototypeDisplayValue("Session (user1)");
 
         buttons.add(crawlClickBtn);
+        buttons.add(clearLogBtn);
+        buttons.add(clearTableBtn);
         buttons.add(new JLabel("Session:"));
         buttons.add(sessionChooser);
-        buttons.add(clearLogBtn);
 
         add(form, BorderLayout.CENTER);
         add(buttons, BorderLayout.SOUTH);
@@ -49,6 +55,7 @@ class ControlsPanel extends JPanel {
 
     /* --- 对外API（主面板来读/写/监听） --- */
     String getTargetUrl() { return targetUrlField.getText(); }
+    String getAccessToken() { return accessTokenField.getText(); }
     String getTiupUid()   { return tiupUidField.getText(); }
     String getSessionStr(){ return sessionField.getText(); }
 
@@ -70,6 +77,7 @@ class ControlsPanel extends JPanel {
     }
 
     void onCrawl(ActionListener l)           { crawlClickBtn.addActionListener(l); }
+    void onClearTable(ActionListener l)      { clearTableBtn.addActionListener(l); }
     void onSessionChanged(ActionListener l)  { sessionChooser.addActionListener(l); }
     void onClearLog(ActionListener l)        { clearLogBtn.addActionListener(l); }
 }

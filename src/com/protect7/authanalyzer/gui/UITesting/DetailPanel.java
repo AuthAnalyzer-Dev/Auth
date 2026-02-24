@@ -1,14 +1,22 @@
 package com.protect7.authanalyzer.gui.UITesting;
 
+import java.awt.BorderLayout;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.util.Arrays;
+
+import javax.swing.JButton;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTabbedPane;
+import javax.swing.JTextArea;
+
 import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
+
 import burp.BurpExtender;
 import burp.IHttpRequestResponse;
 import burp.IResponseInfo;
-
-import javax.swing.*;
-import java.awt.*;
-import java.util.Arrays;
 
 class DetailPanel extends JPanel {
 
@@ -32,7 +40,15 @@ class DetailPanel extends JPanel {
 
         rootTabs.addTab("Original", originalTP);
         rootTabs.addTab("Session", sessionTP);
-        rootTabs.addTab("Log", new JScrollPane(logArea));
+
+        JPanel logPanel = new JPanel(new BorderLayout());
+        JButton clearLogBtn = new JButton("清空日志");
+        clearLogBtn.addActionListener(e -> clearLog());
+        JPanel logToolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 2));
+        logToolbar.add(clearLogBtn);
+        logPanel.add(logToolbar, BorderLayout.NORTH);
+        logPanel.add(new JScrollPane(logArea), BorderLayout.CENTER);
+        rootTabs.addTab("Log", logPanel);
 
         add(rootTabs, BorderLayout.CENTER);
     }
@@ -109,6 +125,10 @@ class DetailPanel extends JPanel {
     void appendLog(String msg) {
         logArea.append(msg + "\n");
         logArea.setCaretPosition(logArea.getDocument().getLength());
+    }
+
+    void clearLog() {
+        logArea.setText("");
     }
 
     private static JTextArea monoArea() {
