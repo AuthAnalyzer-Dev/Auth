@@ -1,6 +1,9 @@
 package com.protect7.authanalyzer.gui.main;
 
+import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -15,6 +18,7 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Scanner;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
@@ -53,6 +57,7 @@ import com.protect7.authanalyzer.gui.listener.DeleteSessionListener;
 import com.protect7.authanalyzer.gui.listener.NewSessionListener;
 import com.protect7.authanalyzer.gui.listener.RenameSessionListener;
 import com.protect7.authanalyzer.gui.util.HintCheckBox;
+import com.protect7.authanalyzer.gui.util.IAnalyzerHost;
 import com.protect7.authanalyzer.gui.util.SessionTabbedPane;
 import com.protect7.authanalyzer.util.CurrentConfig;
 import com.protect7.authanalyzer.util.DataStorageProvider;
@@ -78,10 +83,10 @@ public class ConfigurationPanel extends JPanel {
 	private final String PLAY_TEXT = "\u25b6";
 	private final SessionTabbedPane sessionTabbedPane = new SessionTabbedPane();
 	boolean sessionListChanged = true;
-	private final MainPanel mainPanel;
+	private final IAnalyzerHost host;
 
-	public ConfigurationPanel(MainPanel mainPanel) {
-		this.mainPanel = mainPanel;	
+	public ConfigurationPanel(IAnalyzerHost host) {
+		this.host = host;	
 		sessionTabbedPane.addNewSessionListener(new NewSessionListener() {
 			@Override
 			public void newSession() {
@@ -206,7 +211,7 @@ public class ConfigurationPanel extends JPanel {
 		dropOriginalButton.addActionListener(e -> dropOriginalButtonPressed());
 		dropOriginalButton.setEnabled(false);
 		
-		JButton settingsButton = new JButton("Settings");
+		settingsButton = new JButton("Settings");
 		settingsButton.addActionListener(e -> new SettingsDialog(this));
 
 		setLayout(new GridBagLayout());
@@ -248,12 +253,69 @@ public class ConfigurationPanel extends JPanel {
 		
 	}
 
+	private final JButton settingsButton;
+
+	private static final int MERGED_PANEL_WIDTH = 460;
+
+	/**
+	 * 构建合并布局：统一宽度、对齐、紧凑。
+	 */
+	public void buildMergedLayout(JPanel originalSection, JPanel targetUrlSection, JPanel buttonsPanel) {
+		removeAll();
+		JPanel analyzerRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+		analyzerRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+		analyzerRow.add(startStopButton);
+		analyzerRow.add(pauseButton);
+
+		dropOriginalButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+		settingsButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		JPanel analyzerSection = new JPanel();
+		analyzerSection.setLayout(new BoxLayout(analyzerSection, BoxLayout.Y_AXIS));
+		analyzerSection.setAlignmentX(Component.LEFT_ALIGNMENT);
+		analyzerSection.setBorder(new CompoundBorder(BorderFactory.createTitledBorder("Analyzer"), new EmptyBorder(3, 3, 3, 3)));
+		analyzerSection.add(analyzerRow);
+		analyzerSection.add(dropOriginalButton);
+		analyzerSection.add(settingsButton);
+
+		filterPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		originalSection.setBorder(new CompoundBorder(BorderFactory.createTitledBorder("Original"), new EmptyBorder(3, 3, 3, 3)));
+
+		JPanel merged = new JPanel();
+		merged.setLayout(new BoxLayout(merged, BoxLayout.Y_AXIS));
+		merged.setAlignmentX(Component.LEFT_ALIGNMENT);
+		merged.setMaximumSize(new Dimension(MERGED_PANEL_WIDTH, Integer.MAX_VALUE));
+		merged.add(analyzerSection);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(filterPanel);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(sessionTabbedPane);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(originalSection);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(targetUrlSection);
+		merged.add(Box.createVerticalStrut(4));
+		merged.add(buttonsPanel);
+
+		GridBagConstraints mgc = new GridBagConstraints();
+		mgc.anchor = GridBagConstraints.NORTHWEST;
+		mgc.fill = GridBagConstraints.BOTH;
+		mgc.weightx = 1;
+		mgc.weighty = 1;
+		mgc.gridx = 0;
+		mgc.gridy = 0;
+		add(merged, mgc);
+		revalidate();
+		repaint();
+	}
+
 	public void loadAutoStoredData() {
 		try {
 			String storedData = DataStorageProvider.loadSetup();
 			if(storedData != null) {
 				loadSetup(storedData);
-				mainPanel.updateDividerLocation();
+				host.updateDividerLocation();
 			}
 		} catch (Exception e) {
 			BurpExtender.callbacks.printOutput("Can not restore saved Data. Error Message: " + e.getMessage());
@@ -311,7 +373,7 @@ public class ConfigurationPanel extends JPanel {
 						scanner.close();
 						sessionTabbedPane.removeAll();
 						loadSetup(jsonString);
-						mainPanel.updateDividerLocation();
+						host.updateDividerLocation();
 						JOptionPane.showMessageDialog(this, "Setup successfully loaded");
 					} catch (Exception e) {
 						BurpExtender.callbacks.printError("Error. Can not load setup from JSON file. " + e.getMessage());
@@ -355,7 +417,7 @@ public class ConfigurationPanel extends JPanel {
 
 	private SessionPanel createSession(String sessionName) {
 		if (doModify()) {
-			SessionPanel sessionPanel = new SessionPanel(sessionName, mainPanel);
+			SessionPanel sessionPanel = new SessionPanel(sessionName, host);
 			sessionTabbedPane.add(sessionName, sessionPanel);
 			sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
 			sessionPanelMap.put(sessionName, sessionPanel);
@@ -367,7 +429,7 @@ public class ConfigurationPanel extends JPanel {
 
 	private boolean doCloneSession(String newSessionName, SessionPanel sessionPanelToClone) {
 		if (doModify()) {
-			SessionPanel sessionPanel = new SessionPanel(newSessionName, mainPanel);
+			SessionPanel sessionPanel = new SessionPanel(newSessionName, host);
 			sessionPanel.setHeadersToReplaceText(sessionPanelToClone.getHeadersToReplaceText());
 			sessionPanel.setHeadersToRemoveText(sessionPanelToClone.getHeadersToRemoveText());
 			sessionPanel.setRemoveHeaders(sessionPanelToClone.isRemoveHeaders());
@@ -426,7 +488,7 @@ public class ConfigurationPanel extends JPanel {
 					"Change Session Setup", JOptionPane.OK_CANCEL_OPTION);
 			if (selection == JOptionPane.YES_OPTION) {
 				sessionListChanged = true;
-				mainPanel.getCenterPanel().clearTable();
+				host.getCenterPanelFacade().clearTable();
 				return true;
 			} else {
 				return false;
@@ -522,7 +584,7 @@ public class ConfigurationPanel extends JPanel {
 					}
 
 					if(sessionListChanged) {
-						mainPanel.getCenterPanel().initCenterPanel();
+						host.getCenterPanelFacade().initCenterPanel();
 					}
 					sessionTabbedPane.setModifEnabled(false);
 					pauseButton.setEnabled(true);
@@ -532,7 +594,7 @@ public class ConfigurationPanel extends JPanel {
 					sessionListChanged = false;
 				}
 			}
-			mainPanel.updateDividerLocation();
+			host.updateDividerLocation();
 		}
 	}
 	
@@ -619,7 +681,7 @@ public class ConfigurationPanel extends JPanel {
 		for (JsonElement sessionEl : storedSessionsArray) {
 			JsonObject sessionObject = sessionEl.getAsJsonObject();
 			String sessionName = sessionObject.get("name").getAsString();
-			SessionPanel sessionPanel = new SessionPanel(sessionName, mainPanel);
+			SessionPanel sessionPanel = new SessionPanel(sessionName, host);
 			sessionPanel.setHeadersToReplaceText(sessionObject.get("headersToReplace").getAsString());
 			sessionPanel
 					.setFilterRequestsWithSameHeader(sessionObject.get("filterRequestsWithSameHeader").getAsBoolean());

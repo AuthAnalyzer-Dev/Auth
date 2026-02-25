@@ -51,13 +51,14 @@ import com.protect7.authanalyzer.util.Diff_match_patch;
 import com.protect7.authanalyzer.util.GenericHelper;
 import com.protect7.authanalyzer.util.Diff_match_patch.Diff;
 import com.protect7.authanalyzer.util.Diff_match_patch.LinesToCharsResult;
+import com.protect7.authanalyzer.gui.util.ICenterPanelFacade;
 import burp.BurpExtender;
 import burp.IHttpRequestResponse;
 import burp.IHttpService;
 import burp.IMessageEditor;
 import burp.IMessageEditorController;
 
-public class CenterPanel extends JPanel {
+public class CenterPanel extends JPanel implements ICenterPanelFacade {
 
 	private static final long serialVersionUID = 8472627619821851125L;
 	private final MainPanel mainPanel;

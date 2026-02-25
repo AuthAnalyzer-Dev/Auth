@@ -4,6 +4,7 @@ import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.gui.util.RequestTableModel;
+import com.protect7.authanalyzer.gui.util.TabVisibilityAware;
 import com.protect7.authanalyzer.uitesting.runner.ProxyDriverManager;
 import com.protect7.authanalyzer.util.CurrentConfig;
 import burp.BurpExtender;
@@ -29,18 +30,29 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 
-public class UITestingPanel extends JPanel {
+public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
     private final PrintWriter stdout;
     private final PrintWriter stderr;
 
-    private final ControlsPanel controls = new ControlsPanel();
+    private final ControlsPanel controls;
+
+    protected ControlsPanel createControlsPanel() {
+        return new ControlsPanel();
+    }
+
+    protected ControlsPanel getControls() {
+        return controls;
+    }
     private final RequestTablePanel tablePanel = new RequestTablePanel();
     private final DetailPanel details = new DetailPanel();
+    private JSplitPane mainSplitPane;
 
-    private javax.swing.Timer modelBinderTimer;       // Swing Timer
+    private javax.swing.Timer modelBinderTimer;
+    private javax.swing.Timer autoSelectDebounceTimer;
     private RequestTableModel attachedModel;
     private TableModelListener tableListener;
+    private boolean tabVisible;
 
     // proxy config
     private static final String PROXY_HOST = "127.0.0.1";
@@ -58,6 +70,7 @@ public class UITestingPanel extends JPanel {
     public UITestingPanel(PrintWriter stdout, PrintWriter stderr) {
         this.stdout = stdout;
         this.stderr = stderr;
+        this.controls = createControlsPanel();
         initUI();
         wireEvents();
         startModelBinding();
@@ -70,8 +83,35 @@ public class UITestingPanel extends JPanel {
                 tablePanel, details);
         center.setResizeWeight(0.55);
 
-        add(controls, BorderLayout.WEST);
-        add(center, BorderLayout.CENTER);
+        mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+                new JScrollPane(controls), center);
+        mainSplitPane.setResizeWeight(0);
+        mainSplitPane.setDividerLocation(420);
+        mainSplitPane.setOneTouchExpandable(true);
+        add(mainSplitPane, BorderLayout.CENTER);
+    }
+
+    /** 供合并面板使用：将 Analyzer 配置面板插入到左侧。merged=true 时 configPanel 已含 controls 内容，不再单独添加 controls */
+    protected void setAnalyzerConfigPanel(javax.swing.JPanel configPanel, boolean merged) {
+        JPanel left = new JPanel();
+        left.setLayout(new BoxLayout(left, BoxLayout.Y_AXIS));
+        left.add(configPanel);
+        if (!merged) left.add(controls);
+        JScrollPane leftScroll = new JScrollPane(left);
+        leftScroll.setMinimumSize(new Dimension(280, 0));
+        leftScroll.setPreferredSize(new Dimension(420, 0));
+        mainSplitPane.setLeftComponent(leftScroll);
+        mainSplitPane.setDividerLocation(420);
+        mainSplitPane.setResizeWeight(0);
+        revalidate();
+    }
+
+    /** 供合并面板使用：清空表格（与 CenterPanel.clearTable 一致） */
+    public void clearTable() {
+        com.protect7.authanalyzer.util.CurrentConfig config = CurrentConfig.getCurrentConfig();
+        config.clearSessionRequestMaps();
+        RequestTableModel tm = config.getTableModel();
+        if (tm != null) tm.clearRequestMap();
     }
 
     private void wireEvents() {
@@ -368,9 +408,8 @@ public class UITestingPanel extends JPanel {
     private void onClearTable() {
         CurrentConfig config = CurrentConfig.getCurrentConfig();
         Runnable clear = () -> {
-            if (BurpExtender.mainPanel != null) {
-                BurpExtender.mainPanel.getCenterPanel().clearTable();
-            }
+            com.protect7.authanalyzer.gui.util.ICenterPanelFacade facade = CurrentConfig.getCenterPanelFacade();
+            if (facade != null) facade.clearTable();
         };
         if (config.isRunning()) {
             config.getAnalyzerThreadExecutor().execute(() ->
@@ -405,16 +444,25 @@ public class UITestingPanel extends JPanel {
         tableListener = new TableModelListener() {
             @Override public void tableChanged(TableModelEvent e) {
                 if (e.getType() == TableModelEvent.INSERT || e.getType() == TableModelEvent.UPDATE) {
-                    SwingUtilities.invokeLater(new Runnable() {
-                        @Override public void run() {
-                            tablePanel.autoSelectLastRowIfNone();
-                        }
-                    });
+                    if (!tabVisible) return;
+                    if (autoSelectDebounceTimer != null) {
+                        autoSelectDebounceTimer.stop();
+                        autoSelectDebounceTimer.start();
+                    } else {
+                        SwingUtilities.invokeLater(() -> tablePanel.autoSelectLastRowIfNone());
+                    }
                 }
             }
         };
 
+        autoSelectDebounceTimer = new javax.swing.Timer(300, ev -> {
+            autoSelectDebounceTimer.stop();
+            SwingUtilities.invokeLater(() -> tablePanel.autoSelectLastRowIfNone());
+        });
+        autoSelectDebounceTimer.setRepeats(false);
+
         modelBinderTimer = new javax.swing.Timer(500, ev -> {
+            if (!tabVisible) return;
             try {
                 RequestTableModel tm = CurrentConfig.getCurrentConfig().getTableModel();
                 if (tm == null) return;
@@ -429,7 +477,6 @@ public class UITestingPanel extends JPanel {
                     tablePanel.bindModel(attachedModel);
                     log("[UITestingPanel] attached model @" + System.identityHashCode(tm));
 
-                    // 刷新 Session 列表和标题
                     refreshSessions();
                     details.setSessionTabTitle(controls.getSelectedSessionName());
                     refreshSelectedRowDetails();
@@ -439,7 +486,36 @@ public class UITestingPanel extends JPanel {
             }
         });
         modelBinderTimer.setRepeats(true);
-        modelBinderTimer.start();
+        // 不在此处 start，等 onTabVisible 时再启动，避免非当前标签时空转
+    }
+
+    @Override
+    public void onTabVisible() {
+        tabVisible = true;
+        if (modelBinderTimer != null && !modelBinderTimer.isRunning()) modelBinderTimer.start();
+        SwingUtilities.invokeLater(this::tryBindModelOnce);
+    }
+
+    private void tryBindModelOnce() {
+        if (!tabVisible) return;
+        RequestTableModel tm = CurrentConfig.getCurrentConfig().getTableModel();
+        if (tm == null) return;
+        if (tm != attachedModel) {
+            if (attachedModel != null && tableListener != null) attachedModel.removeTableModelListener(tableListener);
+            attachedModel = tm;
+            attachedModel.addTableModelListener(tableListener);
+            tablePanel.bindModel(attachedModel);
+            refreshSessions();
+            details.setSessionTabTitle(controls.getSelectedSessionName());
+            refreshSelectedRowDetails();
+        }
+    }
+
+    @Override
+    public void onTabHidden() {
+        tabVisible = false;
+        if (modelBinderTimer != null) modelBinderTimer.stop();
+        if (autoSelectDebounceTimer != null) autoSelectDebounceTimer.stop();
     }
 
     private void refreshSessions() {

@@ -7,6 +7,7 @@ import com.protect7.authanalyzer.controller.RequestController;
 import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.entities.Token;
 import com.protect7.authanalyzer.filter.RequestFilter;
+import com.protect7.authanalyzer.gui.util.ICenterPanelFacade;
 import com.protect7.authanalyzer.gui.util.RequestTableModel;
 
 import burp.BurpExtender;
@@ -25,6 +26,15 @@ public class CurrentConfig {
 	private RequestTableModel tableModel = null;
 	private boolean running = false;
 	private boolean dropOriginal = false;
+	private static volatile ICenterPanelFacade centerPanelFacade;
+
+	public static void setCenterPanelFacade(ICenterPanelFacade facade) {
+		centerPanelFacade = facade;
+	}
+
+	public static ICenterPanelFacade getCenterPanelFacade() {
+		return centerPanelFacade;
+	}
 	private volatile int mapId = 0;
 	private boolean respectResponseCodeForSameStatus = true;
 	private boolean respectResponseCodeForSimilarStatus = true; 
@@ -38,8 +48,9 @@ public class CurrentConfig {
 		analyzerThreadExecutor.execute(new Runnable() {				
 			@Override
 			public void run() {
-				BurpExtender.mainPanel.getCenterPanel().updateAmountOfPendingRequests(
-						analyzerThreadExecutor.getQueue().size());
+				if (centerPanelFacade != null) {
+					centerPanelFacade.updateAmountOfPendingRequests(analyzerThreadExecutor.getQueue().size());
+				}
 				getRequestController().analyze(messageInfo);
 				try {
 					Thread.sleep(delayBetweenRequestsInMilliseconds);
@@ -48,8 +59,9 @@ public class CurrentConfig {
 				}
 			}
 		});
-		BurpExtender.mainPanel.getCenterPanel().updateAmountOfPendingRequests(
-				analyzerThreadExecutor.getQueue().size());
+		if (centerPanelFacade != null) {
+			centerPanelFacade.updateAmountOfPendingRequests(analyzerThreadExecutor.getQueue().size());
+		}
 	}
 	
 	public static CurrentConfig getCurrentConfig(){
@@ -81,7 +93,9 @@ public class CurrentConfig {
 		}
 		else {
 			analyzerThreadExecutor.shutdownNow();
-			BurpExtender.mainPanel.getCenterPanel().updateAmountOfPendingRequests(0);
+			if (centerPanelFacade != null) {
+				centerPanelFacade.updateAmountOfPendingRequests(0);
+			}
 		}
 		this.running = running;
 	}

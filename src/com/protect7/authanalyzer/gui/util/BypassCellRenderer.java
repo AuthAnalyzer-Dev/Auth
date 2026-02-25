@@ -5,8 +5,10 @@ import java.awt.Component;
 
 import javax.swing.JTable;
 import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.TableModel;
 
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
+import com.protect7.authanalyzer.gui.Result.ResultTableModel;
 import com.protect7.authanalyzer.util.BypassConstants;
 
 public class BypassCellRenderer extends DefaultTableCellRenderer {
@@ -37,9 +39,8 @@ public class BypassCellRenderer extends DefaultTableCellRenderer {
 			}
 		}
 		else {
-			RequestTableModel tableModel = (RequestTableModel) table.getModel();
-			final OriginalRequestResponse requestResponse = tableModel.getOriginalRequestResponse(table.convertRowIndexToModel(row));   	
-			if(requestResponse.isMarked()) {
+			OriginalRequestResponse requestResponse = getOriginalRequestResponse(table, row);
+			if (requestResponse != null && requestResponse.isMarked()) {
 				if(!isSelected) {
 					c.setBackground(new Color(255, 255, 0, 120));
 				}
@@ -59,5 +60,17 @@ public class BypassCellRenderer extends DefaultTableCellRenderer {
 			}
 		}
 		return c;
+	}
+
+	private static OriginalRequestResponse getOriginalRequestResponse(JTable table, int viewRow) {
+		TableModel model = table.getModel();
+		int modelRow = table.getRowSorter() != null ? table.convertRowIndexToModel(viewRow) : viewRow;
+		if (model instanceof RequestTableModel) {
+			return ((RequestTableModel) model).getOriginalRequestResponse(modelRow);
+		}
+		if (model instanceof ResultTableModel) {
+			return ((ResultTableModel) model).getOriginalRequestResponse(modelRow);
+		}
+		return null;
 	}
 }

@@ -2,6 +2,7 @@ package com.protect7.authanalyzer.gui.entity;
 
 import java.awt.Component;
 import java.awt.Desktop;
+import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -23,7 +24,7 @@ import javax.swing.UIManager;
 import com.protect7.authanalyzer.entities.MatchAndReplace;
 import com.protect7.authanalyzer.entities.Token;
 import com.protect7.authanalyzer.gui.dialog.MatchAndReplaceDialog;
-import com.protect7.authanalyzer.gui.main.MainPanel;
+import com.protect7.authanalyzer.gui.util.IAnalyzerHost;
 import com.protect7.authanalyzer.gui.util.HintCheckBox;
 import com.protect7.authanalyzer.gui.util.PlaceholderTextArea;
 import com.protect7.authanalyzer.gui.util.PlaceholderTextField;
@@ -33,7 +34,7 @@ import com.protect7.authanalyzer.util.Globals;
 public class SessionPanel extends JPanel {
 
 	private static final long serialVersionUID = 1L;
-	private final int textFieldWidth = 70;
+	private final int textFieldWidth = 48;
 	private String sessionName = "";
 	private final PlaceholderTextArea headersToReplaceText = new PlaceholderTextArea(3, textFieldWidth);
 	private final HintCheckBox removeHeaders;
@@ -51,11 +52,11 @@ public class SessionPanel extends JPanel {
 	private final GridBagConstraints c = new GridBagConstraints();
 	private final ArrayList<TokenPanel> tokenPanels = new ArrayList<TokenPanel>();
 	private ArrayList<MatchAndReplace> matchAndReplaceList = new ArrayList<MatchAndReplace>();
-	private final MainPanel mainPanel;
+	private final IAnalyzerHost host;
 
-	public SessionPanel(String sessionName, MainPanel mainPanel) {
+	public SessionPanel(String sessionName, IAnalyzerHost host) {
 		this.sessionName = sessionName;
-		this.mainPanel = mainPanel;
+		this.host = host;
 		sessionPanel.setLayout(new GridBagLayout());
 		c.gridx = 0;
 		c.anchor = GridBagConstraints.WEST;
@@ -79,23 +80,21 @@ public class SessionPanel extends JPanel {
 		headersToReplaceText.putClientProperty("html.disable", null);
 		removeHeaders = new HintCheckBox("Remove Header(s)", false, "The defined Headers will be removed");
 		c.gridwidth = 1;
-		c.insets = new Insets(5, 0, 0, 20);
+		c.insets = new Insets(5, 0, 0, 8);
 		c.gridy++;
 		sessionPanel.add(removeHeaders, c);
 		
 		filterRequestsWithSameHeader = new JCheckBox("Filter requests with same header(s)", false);
 		c.gridx = 1;
-		//sessionPanel.add(filterRequestsWithSameHeader, c);
+		c.insets = new Insets(5, 8, 0, 8);
 		restrictToScope = new HintCheckBox("Restrict to Scope", false, "Session will only be repeated for defined Scope / Path");
-		c.gridx = 2;
 		sessionPanel.add(restrictToScope, c);
 		
-		//testCors = new JCheckBox("Test CORS", false);
 		testCors = new HintCheckBox("Test CORS", false, "HTTP Method will be set to OPTIONS");
-		c.gridx = 3;
+		c.gridx = 2;
 		sessionPanel.add(testCors, c);
 		
-		c.gridwidth = 4;
+		c.gridwidth = 3;
 		c.gridx = 0;
 		c.gridy++;
 		headerToRemoveLabel.setVisible(false);
@@ -122,7 +121,7 @@ public class SessionPanel extends JPanel {
 		c.insets = new Insets(5, 0, 0, 0);
 		sessionPanel.add(new JSeparator(), c);
 
-		JPanel buttonPanel = new JPanel();
+		JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
 		addTokenButton = new JButton("Add Parameter");
 		addTokenButton.addActionListener(e -> addToken());
 		buttonPanel.add(addTokenButton);
@@ -166,7 +165,7 @@ public class SessionPanel extends JPanel {
 			restrictToScopeText.setVisible(false);
 		}
 		revalidate();
-		mainPanel.updateDividerLocation();
+		host.updateDividerLocation();
 	}
 	
 	public void updateMatchAndReplaceButtonText() {
@@ -205,9 +204,9 @@ public class SessionPanel extends JPanel {
 				tokenPanels.get(0).setHeaderVisible(true);
 			}
 			revalidate();
-			mainPanel.updateDividerLocation();
+			host.updateDividerLocation();
 		});
-		mainPanel.updateDividerLocation();
+		host.updateDividerLocation();
 		return tokenPanel;
 	}
 	

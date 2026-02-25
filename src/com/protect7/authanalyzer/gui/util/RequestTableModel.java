@@ -75,7 +75,8 @@ public class RequestTableModel extends AbstractTableModel {
 	
 	@Override
 	public int getColumnCount() {
-		return STATIC_COLUMN_COUNT + (config.getSessions().size()*4);
+		java.util.List<?> sessions = config.getSessions();
+		return STATIC_COLUMN_COUNT + (sessions != null ? sessions.size() * 4 : 0);
 	}
 
 	@Override
@@ -105,34 +106,38 @@ public class RequestTableModel extends AbstractTableModel {
 		if(column == 4) {
 			return originalRequestResponse.getStatusCode();
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		java.util.List<com.protect7.authanalyzer.entities.Session> sessions = config.getSessions();
+		if (sessions == null) sessions = java.util.Collections.emptyList();
+		for(int i=0; i<sessions.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getRequestResponseMap().get(originalRequestResponse.getId()).getStatusCode();
+				com.protect7.authanalyzer.entities.AnalyzerRequestResponse arr = sessions.get(i).getRequestResponseMap().get(originalRequestResponse.getId());
+				return arr != null ? arr.getStatusCode() : null;
 			}
 		}
 		tempColunmIndex++;
 		if(column == tempColunmIndex) {
 			return originalRequestResponse.getResponseContentLength();
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessions.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getRequestResponseMap().get(originalRequestResponse.getId()).getResponseContentLength();
+				com.protect7.authanalyzer.entities.AnalyzerRequestResponse arr = sessions.get(i).getRequestResponseMap().get(originalRequestResponse.getId());
+				return arr != null ? arr.getResponseContentLength() : null;
 			}
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessions.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				int lengthDiff = originalRequestResponse.getResponseContentLength() - 
-				config.getSessions().get(i).getRequestResponseMap().get(originalRequestResponse.getId()).getResponseContentLength();
-				return lengthDiff;
+				com.protect7.authanalyzer.entities.AnalyzerRequestResponse arr = sessions.get(i).getRequestResponseMap().get(originalRequestResponse.getId());
+				return arr != null ? (originalRequestResponse.getResponseContentLength() - arr.getResponseContentLength()) : null;
 			}
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessions.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getRequestResponseMap().get(originalRequestResponse.getId()).getStatus();
+				com.protect7.authanalyzer.entities.AnalyzerRequestResponse arr = sessions.get(i).getRequestResponseMap().get(originalRequestResponse.getId());
+				return arr != null ? arr.getStatus() : BypassConstants.NA;
 			}
 		}
 		tempColunmIndex++;
@@ -160,32 +165,34 @@ public class RequestTableModel extends AbstractTableModel {
 		if(column == 4) {
 			return Column.Code.toString();
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		java.util.List<com.protect7.authanalyzer.entities.Session> sessionsForCol = config.getSessions();
+		if (sessionsForCol == null) sessionsForCol = java.util.Collections.emptyList();
+		for(int i=0; i<sessionsForCol.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getName() + " " + Column.Code;
+				return sessionsForCol.get(i).getName() + " " + Column.Code;
 			}
 		}
 		tempColunmIndex++;
 		if(column == tempColunmIndex) {
 			return Column.Length.toString();
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessionsForCol.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getName() + " " + Column.Length;
+				return sessionsForCol.get(i).getName() + " " + Column.Length;
 			}
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessionsForCol.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getName() + " " + Column.Diff;
+				return sessionsForCol.get(i).getName() + " " + Column.Diff;
 			}
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessionsForCol.size(); i++) {
 			tempColunmIndex++;
 			if(column == tempColunmIndex) {
-				return config.getSessions().get(i).getName() + " " + Column.Status;
+				return sessionsForCol.get(i).getName() + " " + Column.Status;
 			}
 		}
 		tempColunmIndex++;
@@ -213,7 +220,8 @@ public class RequestTableModel extends AbstractTableModel {
 		if(columnIndex == 4) {
 			return Integer.class;
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		int sessionCount = config.getSessions() != null ? config.getSessions().size() : 0;
+		for(int i=0; i<sessionCount; i++) {
 			tempColunmIndex++;
 			if(columnIndex == tempColunmIndex) {
 				return Integer.class;
@@ -223,19 +231,19 @@ public class RequestTableModel extends AbstractTableModel {
 		if(columnIndex == tempColunmIndex) {
 			return Integer.class;
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessionCount; i++) {
 			tempColunmIndex++;
 			if(columnIndex == tempColunmIndex) {
 				return Integer.class;
 			}
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessionCount; i++) {
 			tempColunmIndex++;
 			if(columnIndex == tempColunmIndex) {
 				return Integer.class;
 			}
 		}
-		for(int i=0; i<config.getSessions().size(); i++) {
+		for(int i=0; i<sessionCount; i++) {
 			tempColunmIndex++;
 			if(columnIndex == tempColunmIndex) {
 				return BypassConstants.class;

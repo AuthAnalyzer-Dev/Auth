@@ -1,16 +1,28 @@
 package com.protect7.authanalyzer.gui.UITesting;
 
-import javax.swing.*;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.event.ActionListener;
 import java.util.List;
 
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.JButton;
+import javax.swing.JComboBox;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
+
 class ControlsPanel extends JPanel {
 
-    private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 28);
-    private final JTextField accessTokenField = new JTextField("", 28);
-    private final JTextField tiupUidField = new JTextField("", 28);
-    private final JTextField sessionField = new JTextField("", 28);
+    private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 22);
+    private final JTextField accessTokenField = new JTextField("", 22);
+    private final JTextField tiupUidField = new JTextField("", 22);
+    private final JTextField sessionField = new JTextField("", 22);
 
     private final JButton crawlClickBtn = new JButton("抓取并点击页面链接");
     private final JButton clearLogBtn = new JButton("清空日志");
@@ -18,40 +30,57 @@ class ControlsPanel extends JPanel {
 
     private final JComboBox<String> sessionChooser = new JComboBox<>();
 
+    private final JPanel originalSectionPanel;
+    private final JPanel targetUrlSectionPanel;
+    private final JPanel buttonsPanel;
+
     ControlsPanel() {
+        this(false);
+    }
+
+    ControlsPanel(boolean mergedMode) {
         setLayout(new BorderLayout());
 
-        JPanel form = new JPanel(new GridBagLayout());
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.insets = new Insets(5,5,5,5);
+        gbc.insets = new Insets(5, 5, 5, 5);
 
+        originalSectionPanel = new JPanel(new GridBagLayout());
         int y = 0;
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("Target URL:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(targetUrlField, gbc);
+        gbc.gridx = 0; gbc.gridy = y; gbc.weightx = 0; originalSectionPanel.add(new JLabel("access_token:"), gbc);
+        gbc.gridx = 1; gbc.gridy = y++; gbc.weightx = 1; originalSectionPanel.add(accessTokenField, gbc);
+        gbc.gridx = 0; gbc.gridy = y; gbc.weightx = 0; originalSectionPanel.add(new JLabel("session:"), gbc);
+        gbc.gridx = 1; gbc.gridy = y++; gbc.weightx = 1; originalSectionPanel.add(sessionField, gbc);
+        gbc.gridx = 0; gbc.gridy = y; gbc.weightx = 0; originalSectionPanel.add(new JLabel("tiup_uid:"), gbc);
+        gbc.gridx = 1; gbc.gridy = y++; gbc.weightx = 1; originalSectionPanel.add(tiupUidField, gbc);
 
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("access_token Cookie (域 .ruc.edu.cn):"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(accessTokenField, gbc);
+        targetUrlSectionPanel = new JPanel(new GridBagLayout());
+        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0; targetUrlSectionPanel.add(new JLabel("Target URL:"), gbc);
+        gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1; targetUrlSectionPanel.add(targetUrlField, gbc);
 
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("tiup_uid Cookie:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(tiupUidField, gbc);
-
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("session Cookie:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(sessionField, gbc);
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+        buttonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         sessionChooser.setPrototypeDisplayValue("Session (user1)");
+        buttonsPanel.add(crawlClickBtn);
+        buttonsPanel.add(clearLogBtn);
+        buttonsPanel.add(clearTableBtn);
+        buttonsPanel.add(new JLabel("Session:"));
+        buttonsPanel.add(sessionChooser);
 
-        buttons.add(crawlClickBtn);
-        buttons.add(clearLogBtn);
-        buttons.add(clearTableBtn);
-        buttons.add(new JLabel("Session:"));
-        buttons.add(sessionChooser);
-
-        add(form, BorderLayout.CENTER);
-        add(buttons, BorderLayout.SOUTH);
-        setPreferredSize(new Dimension(520, 0));
+        if (!mergedMode) {
+            JPanel form = new JPanel();
+            form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+            form.add(originalSectionPanel);
+            form.add(Box.createVerticalStrut(6));
+            form.add(targetUrlSectionPanel);
+            add(form, BorderLayout.CENTER);
+            add(buttonsPanel, BorderLayout.SOUTH);
+        }
+        setPreferredSize(new Dimension(460, 0));
     }
+
+    JPanel getOriginalSectionPanel() { return originalSectionPanel; }
+    JPanel getTargetUrlSectionPanel() { return targetUrlSectionPanel; }
+    JPanel getButtonsPanel() { return buttonsPanel; }
 
     /* --- 对外API（主面板来读/写/监听） --- */
     String getTargetUrl() { return targetUrlField.getText(); }
