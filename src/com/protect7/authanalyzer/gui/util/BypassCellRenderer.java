@@ -20,21 +20,24 @@ public class BypassCellRenderer extends DefaultTableCellRenderer {
 	public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus,
 			int row, int column) {
 		Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-		if (value instanceof BypassConstants && !value.toString().equals(BypassConstants.NA.toString())) {
+		if (value instanceof BypassConstants) {
 			BypassConstants bypassConstant = (BypassConstants) value;
-			if (bypassConstant == BypassConstants.SAME) {
-				if (!isSelected) {
-					c.setBackground(new Color(255, 51, 51, 80));
+			setText(bypassConstant.toString());
+			if (!bypassConstant.toString().equals(BypassConstants.NA.toString())) {
+				if (bypassConstant == BypassConstants.SAME) {
+					if (!isSelected) {
+						c.setBackground(new Color(255, 51, 51, 80));
+					}
 				}
-			}
-			if (bypassConstant == BypassConstants.SIMILAR) {
-				if (!isSelected) {
-					c.setBackground(new Color(255, 153, 0, 80));
+				if (bypassConstant == BypassConstants.SIMILAR) {
+					if (!isSelected) {
+						c.setBackground(new Color(255, 153, 0, 80));
+					}
 				}
-			}
-			if (bypassConstant == BypassConstants.DIFFERENT) {
-				if (!isSelected) {
-					c.setBackground(new Color(0, 255, 51, 80));
+				if (bypassConstant == BypassConstants.DIFFERENT) {
+					if (!isSelected) {
+						c.setBackground(new Color(0, 255, 51, 80));
+					}
 				}
 			}
 		}

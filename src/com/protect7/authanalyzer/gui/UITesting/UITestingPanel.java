@@ -452,6 +452,9 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                         SwingUtilities.invokeLater(() -> tablePanel.autoSelectLastRowIfNone());
                     }
                 }
+                if (e.getType() == TableModelEvent.HEADER_ROW) {
+                    SwingUtilities.invokeLater(() -> tablePanel.ensureStatusColumnsVisible());
+                }
             }
         };
 

@@ -133,6 +133,8 @@ public class ConfigurationPanel extends JPanel {
 					sessionPanelMap.remove(title);
 					sessionTabbedPane.remove(getTabbedPaneIndexForTitle(title));
 					sessionTabbedPane.setSelectedIndex(0);
+					createSessionObjects(false);
+					notifyTableStructureChanged();
 				}
 			}
 		});
@@ -321,9 +323,18 @@ public class ConfigurationPanel extends JPanel {
 			BurpExtender.callbacks.printOutput("Can not restore saved Data. Error Message: " + e.getMessage());
 		}
 		if(sessionTabbedPane.getTabCount() == 1) {
-			createSession("user1");
+			createDefaultSession("user1");
 		}
 		sessionTabbedPane.setSelectedIndex(0);
+		createSessionObjects(false);
+		notifyTableStructureChanged();
+	}
+
+	private void notifyTableStructureChanged() {
+		com.protect7.authanalyzer.gui.util.RequestTableModel tm = config.getTableModel();
+		if (tm != null) {
+			javax.swing.SwingUtilities.invokeLater(() -> tm.fireTableStructureChanged());
+		}
 	}
 	
 	public void saveSetup() {
@@ -373,6 +384,8 @@ public class ConfigurationPanel extends JPanel {
 						scanner.close();
 						sessionTabbedPane.removeAll();
 						loadSetup(jsonString);
+						createSessionObjects(false);
+						notifyTableStructureChanged();
 						host.updateDividerLocation();
 						JOptionPane.showMessageDialog(this, "Setup successfully loaded");
 					} catch (Exception e) {
@@ -415,13 +428,21 @@ public class ConfigurationPanel extends JPanel {
 		}
 	}
 
+	/** 初始加载时创建默认 Session，不检查 doModify */
+	private SessionPanel createDefaultSession(String sessionName) {
+		if (sessionPanelMap.containsKey(sessionName)) return sessionPanelMap.get(sessionName);
+		SessionPanel sessionPanel = new SessionPanel(sessionName, host);
+		sessionTabbedPane.add(sessionName, sessionPanel);
+		sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
+		sessionPanelMap.put(sessionName, sessionPanel);
+		createSessionObjects(false);
+		notifyTableStructureChanged();
+		return sessionPanel;
+	}
+
 	private SessionPanel createSession(String sessionName) {
 		if (doModify()) {
-			SessionPanel sessionPanel = new SessionPanel(sessionName, host);
-			sessionTabbedPane.add(sessionName, sessionPanel);
-			sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
-			sessionPanelMap.put(sessionName, sessionPanel);
-			return sessionPanel;
+			return createDefaultSession(sessionName);
 		} else {
 			return null;
 		}
@@ -462,6 +483,8 @@ public class ConfigurationPanel extends JPanel {
 			sessionTabbedPane.add(newSessionName, sessionPanel);
 			sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
 			sessionPanelMap.put(newSessionName, sessionPanel);
+			createSessionObjects(false);
+			notifyTableStructureChanged();
 			return true;
 		} else {
 			return false;
@@ -670,6 +693,7 @@ public class ConfigurationPanel extends JPanel {
 				sessionPanel.getStatusPanel().init(newSession);
 			}
 		}
+		notifyTableStructureChanged();
 	}
 
 	private void loadSetup(String jsonString) {

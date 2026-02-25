@@ -1,6 +1,7 @@
 package com.protect7.authanalyzer.gui.Result;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import javax.swing.table.AbstractTableModel;
 import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
@@ -74,7 +75,8 @@ public class ResultTableModel extends AbstractTableModel {
 
     @Override
     public int getColumnCount() {
-        return STATIC_COLUMN_COUNT + (config.getSessions().size() * 4);
+        java.util.List<Session> sessions = config.getSessions();
+        return STATIC_COLUMN_COUNT + (sessions != null ? sessions.size() * 4 : 0);
     }
 
     @Override
@@ -86,39 +88,35 @@ public class ResultTableModel extends AbstractTableModel {
     public Object getValueAt(int row, int column) {
         if (row >= filteredList.size()) return null;
         OriginalRequestResponse orr = filteredList.get(row);
+        List<Session> sessions = config.getSessions();
+        if (sessions == null) sessions = Collections.emptyList();
         int tempColIndex = 4;
         if (column == 0) return orr.getId();
         if (column == 1) return orr.getMethod();
         if (column == 2) return orr.getHost();
         if (column == 3) return orr.getUrl();
         if (column == 4) return orr.getStatusCode();
-        for (Session s : config.getSessions()) {
+        for (Session s : sessions) {
             tempColIndex++;
             AnalyzerRequestResponse arr = s.getRequestResponseMap().get(orr.getId());
-            if (column == tempColIndex) {
-                return arr != null ? arr.getStatusCode() : null;
-            }
+            if (column == tempColIndex) return arr != null ? arr.getStatusCode() : null;
         }
-        tempColIndex++;
-        if (column == tempColIndex) return orr.getResponseContentLength();
-        for (Session s : config.getSessions()) {
-            tempColIndex++;
-            AnalyzerRequestResponse arr = s.getRequestResponseMap().get(orr.getId());
-            if (column == tempColIndex) {
-                return arr != null ? arr.getResponseContentLength() : null;
-            }
-        }
-        for (Session s : config.getSessions()) {
-            tempColIndex++;
-            AnalyzerRequestResponse arr = s.getRequestResponseMap().get(orr.getId());
-            if (column == tempColIndex) {
-                return (arr != null) ? (orr.getResponseContentLength() - arr.getResponseContentLength()) : null;
-            }
-        }
-        for (Session s : config.getSessions()) {
+        for (Session s : sessions) {
             tempColIndex++;
             AnalyzerRequestResponse arr = s.getRequestResponseMap().get(orr.getId());
             if (column == tempColIndex) return arr != null ? arr.getStatus() : null;
+        }
+        tempColIndex++;
+        if (column == tempColIndex) return orr.getResponseContentLength();
+        for (Session s : sessions) {
+            tempColIndex++;
+            AnalyzerRequestResponse arr = s.getRequestResponseMap().get(orr.getId());
+            if (column == tempColIndex) return arr != null ? arr.getResponseContentLength() : null;
+        }
+        for (Session s : sessions) {
+            tempColIndex++;
+            AnalyzerRequestResponse arr = s.getRequestResponseMap().get(orr.getId());
+            if (column == tempColIndex) return (arr != null) ? (orr.getResponseContentLength() - arr.getResponseContentLength()) : null;
         }
         tempColIndex++;
         if (column == tempColIndex) return orr.getComment();
@@ -127,29 +125,31 @@ public class ResultTableModel extends AbstractTableModel {
 
     @Override
     public String getColumnName(int column) {
+        List<Session> sessions = config.getSessions();
+        if (sessions == null) sessions = Collections.emptyList();
         int tempColIndex = 4;
         if (column == 0) return Column.ID.toString();
         if (column == 1) return Column.Method.toString();
         if (column == 2) return Column.Host.toString();
         if (column == 3) return Column.Path.toString();
         if (column == 4) return Column.Code.toString();
-        for (Session s : config.getSessions()) {
+        for (Session s : sessions) {
             tempColIndex++;
             if (column == tempColIndex) return s.getName() + " " + Column.Code;
         }
+        for (Session s : sessions) {
+            tempColIndex++;
+            if (column == tempColIndex) return s.getName() + " " + Column.Status;
+        }
         tempColIndex++;
         if (column == tempColIndex) return Column.Length.toString();
-        for (Session s : config.getSessions()) {
+        for (Session s : sessions) {
             tempColIndex++;
             if (column == tempColIndex) return s.getName() + " " + Column.Length;
         }
-        for (Session s : config.getSessions()) {
+        for (Session s : sessions) {
             tempColIndex++;
             if (column == tempColIndex) return s.getName() + " " + Column.Diff;
-        }
-        for (Session s : config.getSessions()) {
-            tempColIndex++;
-            if (column == tempColIndex) return s.getName() + " " + Column.Status;
         }
         tempColIndex++;
         if (column == tempColIndex) return Column.Comment.toString();
@@ -158,29 +158,31 @@ public class ResultTableModel extends AbstractTableModel {
 
     @Override
     public Class<?> getColumnClass(int columnIndex) {
+        List<Session> sessions = config.getSessions();
+        if (sessions == null) sessions = Collections.emptyList();
         int tempColIndex = 4;
         if (columnIndex == 0) return Integer.class;
         if (columnIndex == 1) return String.class;
         if (columnIndex == 2) return String.class;
         if (columnIndex == 3) return String.class;
         if (columnIndex == 4) return Integer.class;
-        for (int i = 0; i < config.getSessions().size(); i++) {
+        for (int i = 0; i < sessions.size(); i++) {
             tempColIndex++;
             if (columnIndex == tempColIndex) return Integer.class;
+        }
+        for (int i = 0; i < sessions.size(); i++) {
+            tempColIndex++;
+            if (columnIndex == tempColIndex) return BypassConstants.class;
         }
         tempColIndex++;
         if (columnIndex == tempColIndex) return Integer.class;
-        for (int i = 0; i < config.getSessions().size(); i++) {
+        for (int i = 0; i < sessions.size(); i++) {
             tempColIndex++;
             if (columnIndex == tempColIndex) return Integer.class;
         }
-        for (int i = 0; i < config.getSessions().size(); i++) {
+        for (int i = 0; i < sessions.size(); i++) {
             tempColIndex++;
             if (columnIndex == tempColIndex) return Integer.class;
-        }
-        for (int i = 0; i < config.getSessions().size(); i++) {
-            tempColIndex++;
-            if (columnIndex == tempColIndex) return BypassConstants.class;
         }
         tempColIndex++;
         if (columnIndex == tempColIndex) return String.class;

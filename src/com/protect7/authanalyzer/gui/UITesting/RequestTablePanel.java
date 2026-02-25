@@ -32,7 +32,29 @@ class RequestTablePanel extends JPanel {
         if (this.model == m) return;
         this.model = m;
         table.setModel(m);
+        ensureStatusColumnsVisible();
         autoSelectLastRowIfNone();
+    }
+
+    /** 确保 Status/Diff 列可见：设置列宽并滚动到首个 Status 列 */
+    void ensureStatusColumnsVisible() {
+        if (model == null) return;
+        int colCount = table.getColumnCount();
+        int firstStatusCol = -1;
+        for (int i = 0; i < colCount; i++) {
+            Object hv = table.getColumnModel().getColumn(i).getHeaderValue();
+            if (hv != null) {
+                String header = hv.toString();
+                if (header.contains("Status") || header.contains("Diff")) {
+                    table.getColumnModel().getColumn(i).setMinWidth(70);
+                    table.getColumnModel().getColumn(i).setPreferredWidth(70);
+                    if (firstStatusCol < 0 && header.contains("Status")) firstStatusCol = i;
+                }
+            }
+        }
+        if (firstStatusCol >= 0 && table.getRowCount() > 0) {
+            table.scrollRectToVisible(table.getCellRect(0, firstStatusCol, true));
+        }
     }
 
     void addSelectionListener(ListSelectionListener l) {
