@@ -17,6 +17,7 @@ import com.protect7.authanalyzer.entities.Token;
 import com.protect7.authanalyzer.entities.TokenPriority;
 import com.protect7.authanalyzer.util.BypassConstants;
 import com.protect7.authanalyzer.util.CurrentConfig;
+import com.protect7.authanalyzer.util.SymmetricTrafficStore;
 import com.protect7.authanalyzer.util.ExtractionHelper;
 import com.protect7.authanalyzer.util.GenericHelper;
 import com.protect7.authanalyzer.util.RequestModifHelper;
@@ -125,13 +126,8 @@ public class RequestController {
 					}
 				}
 			}
-			String url = "";
-			if(originalRequestInfo.getUrl().getQuery() == null) {
-				url = originalRequestInfo.getUrl().getPath();
-			}
-			else {
-				url = originalRequestInfo.getUrl().getPath() + "?" + originalRequestInfo.getUrl().getQuery();
-			}
+			String url = normalizeEndpointUrl(originalRequestInfo.getUrl().getPath(),
+					originalRequestInfo.getUrl().getQuery());
 			String infoText = null;
 			if(originalRequestResponse.getResponse() == null) {
 				infoText = "Request Dropped. No Response to show.";
@@ -144,7 +140,11 @@ public class RequestController {
 			}
 			OriginalRequestResponse requestResponse = new OriginalRequestResponse(mapId, originalRequestResponse, 
 					originalRequestInfo.getMethod(), url, infoText, originalStatusCode, originalResponseContentLength);
-			CurrentConfig.getCurrentConfig().getTableModel().addNewRequestResponse(requestResponse);		
+			com.protect7.authanalyzer.gui.util.RequestTableModel tm = CurrentConfig.getCurrentConfig().getTableModel();
+			if (tm != null) {
+				tm.addNewRequestResponse(requestResponse, CurrentConfig.getCurrentConfig().isSymmetricRun2Mode());
+			}
+			writeToSymmetricStore(requestResponse, mapId);
 			GenericHelper.animateBurpExtensionTab();
 		}
 	}
@@ -197,5 +197,48 @@ public class RequestController {
 			}
 		}
 		return BypassConstants.DIFFERENT;
+	}
+
+	/**
+	 * 规范化 URL 用于 endpoint 匹配，避免 Run1/Run2 因查询参数顺序、尾部斜杠等差异导致无法匹配。
+	 */
+	private static String normalizeEndpointUrl(String path, String query) {
+		if (path == null) path = "";
+		if (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
+		if (query == null || query.isEmpty()) return path;
+		String[] params = query.split("&");
+		java.util.Arrays.sort(params);
+		StringBuilder sb = new StringBuilder(path).append('?');
+		for (int i = 0; i < params.length; i++) {
+			if (i > 0) sb.append('&');
+			sb.append(params[i]);
+		}
+		return sb.toString();
+	}
+
+	private void writeToSymmetricStore(OriginalRequestResponse orr, int mapId) {
+		CurrentConfig cfg = CurrentConfig.getCurrentConfig();
+		if (!cfg.isSymmetricCaptureEnabled()) return;
+		SymmetricTrafficStore store = cfg.getSymmetricTrafficStore();
+		if (store == null) return;
+
+		String endpointKey = orr.getEndpoint();
+		byte[] response = orr.getRequestResponse() != null ? orr.getRequestResponse().getResponse() : null;
+		if (response == null) return;
+
+		java.util.List<Session> sessions = cfg.getSessions();
+		BypassConstants replayStatus = null;
+		if (sessions != null && !sessions.isEmpty()) {
+			AnalyzerRequestResponse arr = sessions.get(0).getRequestResponseMap().get(mapId);
+			if (arr != null) replayStatus = arr.getStatus();
+		}
+
+		if (cfg.isSymmetricRun2Mode()) {
+			store.putResponseB(endpointKey, response);
+			if (replayStatus != null) store.putReplayStatusRun2(endpointKey, replayStatus);
+		} else {
+			store.putResponseA(endpointKey, response);
+			if (replayStatus != null) store.putReplayStatusRun1(endpointKey, replayStatus);
+		}
 	}
 }

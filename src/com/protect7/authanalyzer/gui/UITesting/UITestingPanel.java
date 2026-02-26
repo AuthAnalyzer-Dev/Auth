@@ -47,7 +47,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     protected ControlsPanel getControls() {
         return controls;
     }
-    private final RequestTablePanel tablePanel = new RequestTablePanel();
+    protected final RequestTablePanel tablePanel = new RequestTablePanel();
     private final DetailPanel details = new DetailPanel();
     private JSplitPane mainSplitPane;
 
@@ -115,6 +115,11 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         config.clearSessionRequestMaps();
         RequestTableModel tm = config.getTableModel();
         if (tm != null) tm.clearRequestMap();
+        if (config.getSymmetricTrafficStore() != null) {
+            config.getSymmetricTrafficStore().clear();
+            if (config.getTrivialityChecker() != null) config.getTrivialityChecker().clearCache();
+        }
+        config.setSymmetricRun2Mode(false);
     }
 
     private void wireEvents() {
@@ -202,6 +207,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                     }
                 }
                 log("[Crawl] 完成");
+                afterCrawlComplete(true);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 log("[Crawl] 中断");
@@ -226,6 +232,11 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 ex.printStackTrace(stderr);
             }
         }, "Crawl-Click-Thread").start();
+    }
+
+    /** 抓取完成后回调，子类可覆盖以实现 Run2 等后续逻辑。在抓取线程中调用。 */
+    protected void afterCrawlComplete(boolean success) {
+        // 默认空实现
     }
 
     /** 点击元素，确保在当前标签页打开（移除 target="_blank" 避免累积大量标签页） */
@@ -592,7 +603,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         return dot > 0 ? "." + host.substring(dot + 1) : null;
     }
 
-    private void log(String msg) {
+    protected void log(String msg) {
         stdout.println(msg);
         SwingUtilities.invokeLater(() -> details.appendLog(msg));
     }

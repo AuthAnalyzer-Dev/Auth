@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import com.protect7.authanalyzer.controller.RequestController;
+import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
+import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.entities.Token;
 import com.protect7.authanalyzer.filter.RequestFilter;
@@ -27,6 +29,13 @@ public class CurrentConfig {
 	private boolean running = false;
 	private boolean dropOriginal = false;
 	private static volatile ICenterPanelFacade centerPanelFacade;
+
+	// 对称采集
+	private volatile boolean symmetricCaptureEnabled = false;
+	private volatile boolean symmetricRun2Mode = false;
+	private volatile String currentOriginalHeaders = "";
+	private final SymmetricTrafficStore symmetricTrafficStore = new SymmetricTrafficStore();
+	private volatile TrivialityChecker trivialityChecker;
 
 	public static void setCenterPanelFacade(ICenterPanelFacade facade) {
 		centerPanelFacade = facade;
@@ -198,5 +207,58 @@ public class CurrentConfig {
 
 	public void setDerivationForSimilarStatus(int derivationForSimilarStatus) {
 		this.deviationForSimilarStatus = derivationForSimilarStatus;
-	}	
+	}
+
+	// === 对称采集 ===
+	public boolean isSymmetricCaptureEnabled() {
+		return symmetricCaptureEnabled;
+	}
+	public void setSymmetricCaptureEnabled(boolean enabled) {
+		this.symmetricCaptureEnabled = enabled;
+		if (!enabled) {
+			symmetricRun2Mode = false;
+		}
+	}
+	public boolean isSymmetricRun2Mode() {
+		return symmetricRun2Mode;
+	}
+	public void setSymmetricRun2Mode(boolean run2) {
+		this.symmetricRun2Mode = run2;
+	}
+	public String getCurrentOriginalHeaders() {
+		return currentOriginalHeaders != null ? currentOriginalHeaders : "";
+	}
+	public void setCurrentOriginalHeaders(String headers) {
+		this.currentOriginalHeaders = headers != null ? headers : "";
+	}
+	public SymmetricTrafficStore getSymmetricTrafficStore() {
+		return symmetricTrafficStore;
+	}
+	public TrivialityChecker getTrivialityChecker() {
+		if (trivialityChecker == null) {
+			trivialityChecker = new TrivialityChecker(symmetricTrafficStore, requestController);
+		}
+		return trivialityChecker;
+	}
+
+	/** 将主表数据备份到 SymmetricTrafficStore.responseA（Run2 前调用） */
+	public void backupTableToSymmetricStore() {
+		RequestTableModel tm = getTableModel();
+		if (tm == null) return;
+		ArrayList<Session> sess = getSessions();
+		Session firstSession = (sess != null && !sess.isEmpty()) ? sess.get(0) : null;
+		for (int i = 0; i < tm.getRowCount(); i++) {
+			OriginalRequestResponse orr = tm.getOriginalRequestResponse(i);
+			if (orr == null) continue;
+			String endpointKey = orr.getEndpoint();
+			byte[] response = orr.getRequestResponse() != null ? orr.getRequestResponse().getResponse() : null;
+			if (response == null) continue;
+			symmetricTrafficStore.putResponseA(endpointKey, response);
+			if (firstSession != null) {
+				AnalyzerRequestResponse arr = firstSession.getRequestResponseMap().get(orr.getId());
+				if (arr != null) symmetricTrafficStore.putReplayStatusRun1(endpointKey, arr.getStatus());
+			}
+		}
+		if (trivialityChecker != null) trivialityChecker.clearCache();
+	}
 }

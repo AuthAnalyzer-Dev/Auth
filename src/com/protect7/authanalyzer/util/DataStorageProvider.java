@@ -31,6 +31,7 @@ public class DataStorageProvider {
 
 		JsonObject sessionsObject = new JsonObject();
 		sessionsObject.add("sessions", sessionArray);
+		sessionsObject.addProperty("symmetricCaptureEnabled", CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled());
 
 		JsonArray filterArray = new JsonArray();
 		for (RequestFilter filter : CurrentConfig.getCurrentConfig().getRequestFilterList()) {

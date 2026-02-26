@@ -92,6 +92,7 @@ class ControlsPanel extends JPanel {
     /* --- 对外API（主面板来读/写/监听） --- */
     String getTargetUrl() { return targetUrlField.getText(); }
     String getHeadersToReplaceText() { return headersToReplaceText.getText(); }
+    void setHeadersToReplaceText(String text) { headersToReplaceText.setText(text != null ? text : ""); }
 
     void setSessions(List<String> names) {
         sessionChooser.removeAllItems();
@@ -111,6 +112,8 @@ class ControlsPanel extends JPanel {
     }
 
     void onCrawl(ActionListener l)           { crawlClickBtn.addActionListener(l); }
+    /** 程序化触发抓取（如 Run2 后自动执行） */
+    void triggerCrawl()                     { crawlClickBtn.doClick(); }
     void onClearTable(ActionListener l)      { clearTableBtn.addActionListener(l); }
     void onSessionChanged(ActionListener l)  { sessionChooser.addActionListener(l); }
     void onClearLog(ActionListener l)        { clearLogBtn.addActionListener(l); }

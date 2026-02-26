@@ -492,6 +492,11 @@ public class CenterPanel extends JPanel implements ICenterPanelFacade {
 	public void clearTable() {
 		config.clearSessionRequestMaps();
 		tableModel.clearRequestMap();
+		if (config.getSymmetricTrafficStore() != null) {
+			config.getSymmetricTrafficStore().clear();
+			if (config.getTrivialityChecker() != null) config.getTrivialityChecker().clearCache();
+		}
+		config.setSymmetricRun2Mode(false);
 		selectedId = -1;
 		diffPane.setText(TEXT_DIFF_VIEW_DEFAULT);
 	}

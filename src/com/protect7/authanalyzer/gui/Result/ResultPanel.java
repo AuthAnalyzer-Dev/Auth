@@ -5,6 +5,7 @@ import java.awt.FlowLayout;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -24,6 +25,7 @@ import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.gui.util.BypassCellRenderer;
 import com.protect7.authanalyzer.gui.util.TabVisibilityAware;
 import com.protect7.authanalyzer.util.BypassConstants;
+import com.protect7.authanalyzer.util.BypassStatus;
 import com.protect7.authanalyzer.util.CurrentConfig;
 
 /**
@@ -44,6 +46,7 @@ public class ResultPanel extends JPanel implements TabVisibilityAware {
     private final JTable table = new JTable();
     private final ResultDetailPanel detailPanel = new ResultDetailPanel();
     private final JButton refreshButton = new JButton("刷新");
+    private final JCheckBox excludeTrivialCheckBox = new JCheckBox("排除 Trivial", true);
     private final JComboBox<String> sessionChooser = new JComboBox<>();
     private Timer syncTimer;
     private Timer debounceTimer;
@@ -55,6 +58,13 @@ public class ResultPanel extends JPanel implements TabVisibilityAware {
 
         JPanel topPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
         topPanel.add(refreshButton);
+        excludeTrivialCheckBox.setSelected(resultModel.isExcludeTrivial());
+        excludeTrivialCheckBox.setToolTipText("对称采集模式下，排除平凡响应（Resp_A == Resp_B）");
+        excludeTrivialCheckBox.addActionListener(e -> {
+            resultModel.setExcludeTrivial(excludeTrivialCheckBox.isSelected());
+            scheduleRefresh(false);
+        });
+        topPanel.add(excludeTrivialCheckBox);
         topPanel.add(new JLabel("Session:"));
         topPanel.add(sessionChooser);
         add(topPanel, BorderLayout.NORTH);
@@ -66,6 +76,7 @@ public class ResultPanel extends JPanel implements TabVisibilityAware {
         table.setDefaultRenderer(Integer.class, new BypassCellRenderer());
         table.setDefaultRenderer(String.class, new BypassCellRenderer());
         table.setDefaultRenderer(BypassConstants.class, new BypassCellRenderer());
+        table.setDefaultRenderer(BypassStatus.class, new BypassCellRenderer());
 
         JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
                 new JScrollPane(table), detailPanel);
@@ -101,6 +112,7 @@ public class ResultPanel extends JPanel implements TabVisibilityAware {
         new Thread(() -> {
             resultModel.refresh();
             SwingUtilities.invokeLater(() -> {
+                resultModel.notifyStructureChanged();
                 resultModel.notifyDataChanged();
                 refreshSessions();
                 refreshSelectedRowDetails();
@@ -170,6 +182,10 @@ public class ResultPanel extends JPanel implements TabVisibilityAware {
                 mainModel.addTableModelListener(new TableModelListener() {
                     @Override
                     public void tableChanged(TableModelEvent ev) {
+                        if (ev.getFirstRow() == TableModelEvent.HEADER_ROW) {
+                            if (tabVisible.get()) scheduleRefresh(false);
+                            return;
+                        }
                         if (ev.getType() == TableModelEvent.INSERT || ev.getType() == TableModelEvent.UPDATE) {
                             if (!tabVisible.get()) return;
                             debounceTimer.stop();

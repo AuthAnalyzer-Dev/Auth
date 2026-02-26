@@ -10,6 +10,7 @@ import javax.swing.table.TableModel;
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.gui.Result.ResultTableModel;
 import com.protect7.authanalyzer.util.BypassConstants;
+import com.protect7.authanalyzer.util.BypassStatus;
 
 public class BypassCellRenderer extends DefaultTableCellRenderer {
 
@@ -40,8 +41,29 @@ public class BypassCellRenderer extends DefaultTableCellRenderer {
 					}
 				}
 			}
-		}
-		else {
+		} else if (value instanceof BypassStatus) {
+			BypassStatus status = (BypassStatus) value;
+			setText(status.toString());
+			if (!isSelected) {
+				switch (status) {
+					case TRIVIAL:
+						c.setBackground(new Color(180, 180, 180, 100));
+						break;
+					case VERTICAL:
+						c.setBackground(new Color(255, 100, 100, 100));
+						break;
+					case HORIZONTAL:
+						c.setBackground(new Color(255, 153, 0, 100));
+						break;
+					case RUN1_ONLY:
+					case RUN2_ONLY:
+						c.setBackground(new Color(220, 220, 220, 80));
+						break;
+					default:
+						break;
+				}
+			}
+		} else {
 			OriginalRequestResponse requestResponse = getOriginalRequestResponse(table, row);
 			if (requestResponse != null && requestResponse.isMarked()) {
 				if(!isSelected) {

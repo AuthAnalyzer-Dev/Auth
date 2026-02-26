@@ -3,6 +3,7 @@ package com.protect7.authanalyzer.gui.UITesting;
 import java.awt.BorderLayout;
 import javax.swing.BoxLayout;
 import javax.swing.JLabel;
+import javax.swing.SwingUtilities;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingConstants;
@@ -63,6 +64,11 @@ public class MergedUITestingPanel extends UITestingPanel implements IAnalyzerHos
                 getControls().getButtonsPanel());
         setAnalyzerConfigPanel(wrapConfigWithPending(configurationPanel), true);
 
+        if (CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled()) {
+            String h = getOriginalHeadersToReplace();
+            CurrentConfig.getCurrentConfig().setCurrentOriginalHeaders(h != null ? h : "");
+        }
+
         BurpExtender.callbacks.registerContextMenuFactory(new ContextMenuController(configurationPanel));
     }
 
@@ -88,5 +94,43 @@ public class MergedUITestingPanel extends UITestingPanel implements IAnalyzerHos
     public void updateDividerLocation() {
         // 合并布局无 splitPane 分隔条，可留空或做简单 revalidate
         revalidate();
+    }
+
+    @Override
+    public String getOriginalHeadersToReplace() {
+        return getControls().getHeadersToReplaceText();
+    }
+
+    @Override
+    public void setOriginalHeadersToReplace(String headers) {
+        getControls().setHeadersToReplaceText(headers);
+    }
+
+    @Override
+    public void triggerRun2Crawl() {
+        getControls().triggerCrawl();
+    }
+
+    @Override
+    public void onSymmetricCaptureToggled() {
+        tablePanel.setRunToggleVisible(CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled());
+    }
+
+    @Override
+    public boolean supportsSymmetricCapture() {
+        return true;
+    }
+
+    @Override
+    protected void afterCrawlComplete(boolean success) {
+        if (!success) return;
+        if (!CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled()
+                || CurrentConfig.getCurrentConfig().isSymmetricRun2Mode()) return;
+        SwingUtilities.invokeLater(() -> {
+            if (configurationPanel.performRun2Transition()) {
+                log("[Crawl] Run1 完成，自动进入 Run2...");
+                triggerRun2Crawl();
+            }
+        });
     }
 }
