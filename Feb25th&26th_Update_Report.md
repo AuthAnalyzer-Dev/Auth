@@ -111,8 +111,57 @@
 
 ---
 
-## 四、使用说明
+## 四、隐藏 API 发现功能
+
+### 4.1 目标
+
+发现页面上没有入口的 API（隐藏 API），并送入 Analyzer 进行越权检测。
+
+### 4.2 发现方式
+
+| 方式 | 说明 |
+|------|------|
+| **从 JS 提取** | 解析页面 `<script>`（含外部 JS），用正则提取 fetch、axios、$.ajax 等调用的路径 |
+| **从 Swagger 探测** | 依次请求 /swagger.json、/v2/api-docs、/openapi.json 等，解析 paths 获取 endpoint |
+
+### 4.3 核心组件
+
+| 组件 | 说明 |
+|------|------|
+| **ApiDiscoveryService** | discoverFromJs、discoverFromSwagger |
+| **DiscoveredEndpoint** | method、path、source（JS/Swagger） |
+| **SyntheticRequestBuilder** | 构造 HTTP 请求并执行，注入 Original headers |
+| **DiscoveredApiListPanel** | 发现的隐藏 API 列表展示 |
+
+### 4.4 UI 与流程
+
+- **API 发现区域**：勾选「从 JS 提取」「从 Swagger 探测」，点击「发现隐藏 API」
+- **发现的隐藏 API 列表**：展示在 UI Testing 页面下方
+- **自动送入 Analyzer**：抓取（Run1/Run2）完成后，自动将发现的 API 构造请求并 performAuthAnalyzerRequest，与非隐藏 API 一并完成越权检测
+- **JS 提取前**：注入 Original 的 Cookie，避免卡在登录页
+- **发现结束后**：自动关闭浏览器
+
+### 4.5 涉及文件
+
+| 文件 | 变更类型 |
+|------|----------|
+| `uitesting/discovery/DiscoveredEndpoint.java` | 新增 |
+| `uitesting/discovery/ApiDiscoveryService.java` | 新增 |
+| `uitesting/discovery/SyntheticRequestBuilder.java` | 新增 |
+| `gui/UITesting/DiscoveredApiListPanel.java` | 新增 |
+| `gui/UITesting/ControlsPanel.java` | API 发现区域、发现按钮 |
+| `gui/UITesting/UITestingPanel.java` | onDiscoverClick、sendDiscoveredApisToAnalyzer、afterCrawlComplete |
+| `gui/main/ConfigurationPanel.java` | buildMergedLayout 增加 apiDiscoveryPanel |
+| `gui/UITesting/MergedUITestingPanel.java` | 传入 apiDiscoveryPanel |
+
+### 4.6 算法文档
+
+详见 `docs/HiddenApiDiscovery-Algorithms.md`。
+
+---
+
+## 五、使用说明
 
 对称采集仅在 **UI Testing 合并布局** 下完整支持（需 Original headers 配置）。在 Analyzer 独立布局（MainPanel）下，若加载含对称采集的配置，将自动关闭对称采集。
 
-详见 `使用指南.md` 中「对称采集（平凡响应筛选）」章节。
+隐藏 API 发现功能详见 `使用指南.md` 中「隐藏 API 发现」章节。
