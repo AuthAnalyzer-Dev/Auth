@@ -1,6 +1,7 @@
 package com.protect7.authanalyzer.gui.UITesting;
 
 import java.awt.BorderLayout;
+import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
@@ -17,12 +18,14 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
 
+import com.protect7.authanalyzer.gui.util.PlaceholderTextArea;
+
 class ControlsPanel extends JPanel {
 
+    private static final int TEXT_AREA_COLUMNS = 48;
+
     private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 22);
-    private final JTextField accessTokenField = new JTextField("", 22);
-    private final JTextField tiupUidField = new JTextField("", 22);
-    private final JTextField sessionField = new JTextField("", 22);
+    private final PlaceholderTextArea headersToReplaceText = new PlaceholderTextArea(3, TEXT_AREA_COLUMNS);
 
     private final JButton crawlClickBtn = new JButton("抓取并点击页面链接");
     private final JButton clearLogBtn = new JButton("清空日志");
@@ -46,17 +49,21 @@ class ControlsPanel extends JPanel {
         gbc.insets = new Insets(5, 5, 5, 5);
 
         originalSectionPanel = new JPanel(new GridBagLayout());
-        int y = 0;
-        gbc.gridx = 0; gbc.gridy = y; gbc.weightx = 0; originalSectionPanel.add(new JLabel("access_token:"), gbc);
-        gbc.gridx = 1; gbc.gridy = y++; gbc.weightx = 1; originalSectionPanel.add(accessTokenField, gbc);
-        gbc.gridx = 0; gbc.gridy = y; gbc.weightx = 0; originalSectionPanel.add(new JLabel("session:"), gbc);
-        gbc.gridx = 1; gbc.gridy = y++; gbc.weightx = 1; originalSectionPanel.add(sessionField, gbc);
-        gbc.gridx = 0; gbc.gridy = y; gbc.weightx = 0; originalSectionPanel.add(new JLabel("tiup_uid:"), gbc);
-        gbc.gridx = 1; gbc.gridy = y++; gbc.weightx = 1; originalSectionPanel.add(tiupUidField, gbc);
+        JLabel headerToReplaceLabel = new JLabel("Header(s) to Replace");
+        headersToReplaceText.setAlignmentX(Component.LEFT_ALIGNMENT);
+        headersToReplaceText.setPlaceholder("Cookie: access_token=xxx\nCookie: session=xxx\nCookie: name=value");
+        headersToReplaceText.setToolTipText(
+                "<html>支持任意 Cookie，每行一个 Header 或分号分隔。如：<br>Cookie: access_token=xxx<br>Cookie: session=xxx; tiup_uid=yyy</html>");
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2; gbc.weightx = 1; gbc.weighty = 0;
+        originalSectionPanel.add(headerToReplaceLabel, gbc);
+        gbc.gridy = 1; gbc.weighty = 1;
+        originalSectionPanel.add(headersToReplaceText, gbc);
 
         targetUrlSectionPanel = new JPanel(new GridBagLayout());
-        gbc.gridx = 0; gbc.gridy = 0; gbc.weightx = 0; targetUrlSectionPanel.add(new JLabel("Target URL:"), gbc);
-        gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1; targetUrlSectionPanel.add(targetUrlField, gbc);
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 1; gbc.weightx = 1; gbc.weighty = 0;
+        targetUrlSectionPanel.add(new JLabel("Target URL:"), gbc);
+        gbc.gridy = 1; gbc.weighty = 1;
+        targetUrlSectionPanel.add(targetUrlField, gbc);
 
         buttonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         sessionChooser.setPrototypeDisplayValue("Session (user1)");
@@ -84,9 +91,7 @@ class ControlsPanel extends JPanel {
 
     /* --- 对外API（主面板来读/写/监听） --- */
     String getTargetUrl() { return targetUrlField.getText(); }
-    String getAccessToken() { return accessTokenField.getText(); }
-    String getTiupUid()   { return tiupUidField.getText(); }
-    String getSessionStr(){ return sessionField.getText(); }
+    String getHeadersToReplaceText() { return headersToReplaceText.getText(); }
 
     void setSessions(List<String> names) {
         sessionChooser.removeAllItems();

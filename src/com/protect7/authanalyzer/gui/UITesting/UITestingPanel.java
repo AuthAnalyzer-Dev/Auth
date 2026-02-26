@@ -27,8 +27,11 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.io.PrintWriter;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Set;
 
 public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
@@ -261,37 +264,60 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 || k.contains("/logout") || k.contains("/signout");
     }
 
-    /** 注入 Cookie（access_token/tiup_uid/session），用于初始登录及点击登出后恢复登录 */
+    /** 需使用父域的 Cookie 名（跨子域共享的认证 token 等） */
+    private static final Set<String> PARENT_DOMAIN_COOKIES = new HashSet<>(Arrays.asList(
+            "access_token", "token", "auth_token", "oauth_token", "bearer_token",
+            "id_token", "refresh_token", "jwt", "session_token"));
+
+    /** 从 headersToReplace 解析 Cookie 并注入，用于初始登录及点击登出后恢复登录 */
     private void applyCookies(WebDriver driver, String targetPage, boolean logOnApply) {
-        String accessToken = controls.getAccessToken();
-        String tiupUid = controls.getTiupUid();
-        String session = controls.getSessionStr();
-        boolean hasAny = (accessToken != null && !accessToken.trim().isEmpty())
-                || (tiupUid != null && !tiupUid.trim().isEmpty())
-                || (session != null && !session.trim().isEmpty());
-        if (!hasAny) return;
+        String headersText = controls.getHeadersToReplaceText();
+        if (headersText == null || headersText.trim().isEmpty()) return;
         String domain = getDomainFromUrl(targetPage);
         String parentDomain = getParentDomain(domain);
         if (domain == null) return;
+        List<CookieEntry> cookies = parseCookiesFromHeaders(headersText);
+        if (cookies.isEmpty()) return;
         try {
             driver.manage().deleteAllCookies();
             boolean isHttps = targetPage != null && targetPage.trim().toLowerCase().startsWith("https");
-            if (accessToken != null && !accessToken.trim().isEmpty() && parentDomain != null) {
-                driver.manage().addCookie(new Cookie.Builder("access_token", accessToken.trim())
-                        .domain(parentDomain).path("/").isSecure(isHttps).build());
-            }
-            if (tiupUid != null && !tiupUid.trim().isEmpty()) {
-                driver.manage().addCookie(new Cookie.Builder("tiup_uid", tiupUid.trim())
-                        .domain(domain).path("/").isSecure(isHttps).build());
-            }
-            if (session != null && !session.trim().isEmpty()) {
-                driver.manage().addCookie(new Cookie.Builder("session", session.trim())
-                        .domain(domain).path("/").isSecure(isHttps).build());
+            for (CookieEntry ce : cookies) {
+                String cookieDomain = PARENT_DOMAIN_COOKIES.contains(ce.name.toLowerCase()) && parentDomain != null
+                        ? parentDomain : domain;
+                driver.manage().addCookie(new Cookie.Builder(ce.name, ce.value)
+                        .domain(cookieDomain).path("/").isSecure(isHttps).build());
             }
             if (logOnApply) log("[Crawl] 已应用 Cookie");
         } catch (Exception cex) {
             log("[Crawl] 设置 Cookie 失败: " + cex.getMessage());
         }
+    }
+
+    /** 解析 headersToReplace 文本，提取 Cookie 的 name=value 对 */
+    private static List<CookieEntry> parseCookiesFromHeaders(String headersText) {
+        List<CookieEntry> result = new ArrayList<>();
+        String[] lines = headersText.replace("\r", "").split("\n");
+        for (String line : lines) {
+            int colon = line.indexOf(':');
+            if (colon <= 0) continue;
+            String headerName = line.substring(0, colon).trim();
+            if (!"Cookie".equalsIgnoreCase(headerName)) continue;
+            String cookieValue = line.substring(colon + 1).trim();
+            String[] pairs = cookieValue.split(";");
+            for (String pair : pairs) {
+                int eq = pair.indexOf('=');
+                if (eq <= 0) continue;
+                String name = pair.substring(0, eq).trim();
+                String value = pair.substring(eq + 1).trim();
+                if (!name.isEmpty()) result.add(new CookieEntry(name, value));
+            }
+        }
+        return result;
+    }
+
+    private static final class CookieEntry {
+        final String name, value;
+        CookieEntry(String name, String value) { this.name = name; this.value = value; }
     }
 
     private void applyCookies(WebDriver driver, String targetPage) {
