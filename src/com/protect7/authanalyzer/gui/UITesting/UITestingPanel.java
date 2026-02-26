@@ -5,9 +5,13 @@ import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.gui.util.RequestTableModel;
 import com.protect7.authanalyzer.gui.util.TabVisibilityAware;
+import com.protect7.authanalyzer.uitesting.discovery.ApiDiscoveryService;
+import com.protect7.authanalyzer.uitesting.discovery.DiscoveredEndpoint;
+import com.protect7.authanalyzer.uitesting.discovery.SyntheticRequestBuilder;
 import com.protect7.authanalyzer.uitesting.runner.ProxyDriverManager;
 import com.protect7.authanalyzer.util.CurrentConfig;
 import burp.BurpExtender;
+import burp.IHttpRequestResponse;
 import org.openqa.selenium.By;
 import org.openqa.selenium.Cookie;
 import org.openqa.selenium.JavascriptExecutor;
@@ -49,6 +53,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     }
     protected final RequestTablePanel tablePanel = new RequestTablePanel();
     private final DetailPanel details = new DetailPanel();
+    protected final DiscoveredApiListPanel discoveredApiListPanel = new DiscoveredApiListPanel();
     private JSplitPane mainSplitPane;
 
     private javax.swing.Timer modelBinderTimer;
@@ -86,12 +91,29 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 tablePanel, details);
         center.setResizeWeight(0.55);
 
+        JPanel rightTop = new JPanel(new BorderLayout());
+        rightTop.add(center, BorderLayout.CENTER);
+
+        JSplitPane rightVertical = new JSplitPane(JSplitPane.VERTICAL_SPLIT, rightTop,
+                createDiscoveredApiSection());
+        rightVertical.setResizeWeight(0.7);
+        rightVertical.setDividerLocation(400);
+        rightVertical.setOneTouchExpandable(true);
+
         mainSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
-                new JScrollPane(controls), center);
+                new JScrollPane(controls), rightVertical);
         mainSplitPane.setResizeWeight(0);
         mainSplitPane.setDividerLocation(420);
         mainSplitPane.setOneTouchExpandable(true);
         add(mainSplitPane, BorderLayout.CENTER);
+    }
+
+    private JPanel createDiscoveredApiSection() {
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setBorder(javax.swing.BorderFactory.createTitledBorder("发现的隐藏 API"));
+        wrap.add(new JScrollPane(discoveredApiListPanel), BorderLayout.CENTER);
+        wrap.setMinimumSize(new Dimension(0, 120));
+        return wrap;
     }
 
     /** 供合并面板使用：将 Analyzer 配置面板插入到左侧。merged=true 时 configPanel 已含 controls 内容，不再单独添加 controls */
@@ -124,6 +146,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
     private void wireEvents() {
         controls.onCrawl(this::onCrawlClick);
+        controls.onDiscover(this::onDiscoverClick);
         controls.onSessionChanged(e -> {
             details.setSessionTabTitle(controls.getSelectedSessionName());
             refreshSelectedRowDetails();
@@ -139,6 +162,76 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     }
 
     /* ================= 主动作 ================= */
+
+    private void onDiscoverClick(ActionEvent e) {
+        new Thread(() -> {
+            try {
+                String targetUrl = controls.getTargetUrl();
+                if (targetUrl == null || targetUrl.trim().isEmpty()) {
+                    log("[API 发现] 请先配置 Target URL");
+                    return;
+                }
+                boolean fromJs = controls.isDiscoverFromJsSelected();
+                boolean fromSwagger = controls.isDiscoverFromSwaggerSelected();
+                if (!fromJs && !fromSwagger) {
+                    log("[API 发现] 请至少勾选一种发现方式");
+                    return;
+                }
+
+                java.util.List<DiscoveredEndpoint> all = new java.util.ArrayList<>();
+                ApiDiscoveryService service = new ApiDiscoveryService();
+                ApiDiscoveryService.DiscoveryCallback cb = new ApiDiscoveryService.DiscoveryCallback() {
+                    @Override
+                    public void onProgress(String msg) {
+                        log("[API 发现] " + msg);
+                    }
+                    @Override
+                    public void onError(String msg) {
+                        log("[API 发现] " + msg);
+                    }
+                };
+
+                if (fromSwagger) {
+                    java.util.List<DiscoveredEndpoint> swagger = service.discoverFromSwagger(targetUrl, cb);
+                    all.addAll(swagger);
+                }
+
+                if (fromJs) {
+                    WebDriver driver = ProxyDriverManager.getOrStartDriver(true, PROXY_HOST, PROXY_PORT, false);
+                    if (driver != null) {
+                        try {
+                            log("[API 发现] 导航至目标页面并注入 Cookie...");
+                            driver.get(targetUrl);
+                            Thread.sleep(500);
+                            applyCookies(driver, targetUrl, true);
+                            driver.get(targetUrl);
+                            Thread.sleep(800);
+                            java.util.List<DiscoveredEndpoint> js = service.discoverFromJs(driver, targetUrl, cb);
+                            for (DiscoveredEndpoint ep : js) {
+                                if (!all.contains(ep)) all.add(ep);
+                            }
+                        } catch (Throwable t) {
+                            log("[API 发现] JS 提取出错: " + t.getMessage());
+                        } finally {
+                            ProxyDriverManager.stopDriver();
+                            log("[API 发现] 已关闭浏览器");
+                        }
+                    } else {
+                        log("[API 发现] 无法启动浏览器，跳过 JS 提取");
+                    }
+                }
+
+                final java.util.List<DiscoveredEndpoint> finalList = all;
+                SwingUtilities.invokeLater(() -> {
+                    discoveredApiListPanel.setEndpoints(finalList);
+                    log("[API 发现] 完成，共发现 " + finalList.size() + " 个端点");
+                });
+            } catch (Throwable ex) {
+                log("[API 发现] 出错: " + ex.getMessage());
+                ex.printStackTrace(stderr);
+            }
+        }, "API-Discovery-Thread").start();
+    }
 
     private void onCrawlClick(ActionEvent e) {
         new Thread(() -> {
@@ -236,7 +329,27 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
     /** 抓取完成后回调，子类可覆盖以实现 Run2 等后续逻辑。在抓取线程中调用。 */
     protected void afterCrawlComplete(boolean success) {
-        // 默认空实现
+        if (success) sendDiscoveredApisToAnalyzer();
+    }
+
+    /** 将发现的隐藏 API 构造请求并送入 Analyzer，与抓取到的非隐藏 API 一并完成越权检测。 */
+    protected void sendDiscoveredApisToAnalyzer() {
+        java.util.List<DiscoveredEndpoint> endpoints = discoveredApiListPanel.getAllEndpoints();
+        if (endpoints == null || endpoints.isEmpty()) return;
+
+        String baseUrl = controls.getTargetUrl();
+        String headers = controls.getHeadersToReplaceText();
+        if (baseUrl == null || baseUrl.trim().isEmpty()) return;
+
+        for (DiscoveredEndpoint ep : endpoints) {
+            IHttpRequestResponse rr = SyntheticRequestBuilder.buildAndExecute(ep, baseUrl, headers, this::log);
+            if (rr != null && rr.getRequest() != null) {
+                CurrentConfig.getCurrentConfig().performAuthAnalyzerRequest(rr);
+            }
+        }
+        if (!endpoints.isEmpty()) {
+            log("[API 发现] 已送入 Analyzer: " + endpoints.size() + " 个端点");
+        }
     }
 
     /** 点击元素，确保在当前标签页打开（移除 target="_blank" 避免累积大量标签页） */

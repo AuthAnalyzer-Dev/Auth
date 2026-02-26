@@ -61,6 +61,7 @@ public class MergedUITestingPanel extends UITestingPanel implements IAnalyzerHos
         configurationPanel.buildMergedLayout(
                 getControls().getOriginalSectionPanel(),
                 getControls().getTargetUrlSectionPanel(),
+                getControls().getApiDiscoveryPanel(),
                 getControls().getButtonsPanel());
         setAnalyzerConfigPanel(wrapConfigWithPending(configurationPanel), true);
 

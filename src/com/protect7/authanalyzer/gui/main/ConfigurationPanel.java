@@ -270,7 +270,7 @@ public class ConfigurationPanel extends JPanel {
 	/**
 	 * 构建合并布局：统一宽度、对齐、紧凑。
 	 */
-	public void buildMergedLayout(JPanel originalSection, JPanel targetUrlSection, JPanel buttonsPanel) {
+	public void buildMergedLayout(JPanel originalSection, JPanel targetUrlSection, JPanel apiDiscoveryPanel, JPanel buttonsPanel) {
 		removeAll();
 		JPanel analyzerRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 		analyzerRow.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -348,6 +348,10 @@ public class ConfigurationPanel extends JPanel {
 		merged.add(originalSection);
 		merged.add(Box.createVerticalStrut(6));
 		merged.add(targetUrlSection);
+		if (apiDiscoveryPanel != null) {
+			merged.add(Box.createVerticalStrut(4));
+			merged.add(apiDiscoveryPanel);
+		}
 		merged.add(Box.createVerticalStrut(4));
 		merged.add(buttonsPanel);
 

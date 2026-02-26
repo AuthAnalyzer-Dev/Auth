@@ -13,6 +13,7 @@ import java.util.List;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
@@ -31,10 +32,15 @@ class ControlsPanel extends JPanel {
     private final JButton clearLogBtn = new JButton("清空日志");
     private final JButton clearTableBtn = new JButton("清空表格");
 
+    private final JCheckBox discoverFromJsCheck = new JCheckBox("从 JS 提取", true);
+    private final JCheckBox discoverFromSwaggerCheck = new JCheckBox("从 Swagger 探测", true);
+    private final JButton discoverBtn = new JButton("发现隐藏 API");
+
     private final JComboBox<String> sessionChooser = new JComboBox<>();
 
     private final JPanel originalSectionPanel;
     private final JPanel targetUrlSectionPanel;
+    private final JPanel apiDiscoveryPanel;
     private final JPanel buttonsPanel;
 
     ControlsPanel() {
@@ -65,6 +71,12 @@ class ControlsPanel extends JPanel {
         gbc.gridy = 1; gbc.weighty = 1;
         targetUrlSectionPanel.add(targetUrlField, gbc);
 
+        apiDiscoveryPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        apiDiscoveryPanel.add(new JLabel("API 发现:"));
+        apiDiscoveryPanel.add(discoverFromJsCheck);
+        apiDiscoveryPanel.add(discoverFromSwaggerCheck);
+        apiDiscoveryPanel.add(discoverBtn);
+
         buttonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         sessionChooser.setPrototypeDisplayValue("Session (user1)");
         buttonsPanel.add(crawlClickBtn);
@@ -79,6 +91,8 @@ class ControlsPanel extends JPanel {
             form.add(originalSectionPanel);
             form.add(Box.createVerticalStrut(6));
             form.add(targetUrlSectionPanel);
+            form.add(Box.createVerticalStrut(6));
+            form.add(apiDiscoveryPanel);
             add(form, BorderLayout.CENTER);
             add(buttonsPanel, BorderLayout.SOUTH);
         }
@@ -87,7 +101,11 @@ class ControlsPanel extends JPanel {
 
     JPanel getOriginalSectionPanel() { return originalSectionPanel; }
     JPanel getTargetUrlSectionPanel() { return targetUrlSectionPanel; }
+    JPanel getApiDiscoveryPanel() { return apiDiscoveryPanel; }
     JPanel getButtonsPanel() { return buttonsPanel; }
+
+    boolean isDiscoverFromJsSelected() { return discoverFromJsCheck.isSelected(); }
+    boolean isDiscoverFromSwaggerSelected() { return discoverFromSwaggerCheck.isSelected(); }
 
     /* --- 对外API（主面板来读/写/监听） --- */
     String getTargetUrl() { return targetUrlField.getText(); }
@@ -112,6 +130,7 @@ class ControlsPanel extends JPanel {
     }
 
     void onCrawl(ActionListener l)           { crawlClickBtn.addActionListener(l); }
+    void onDiscover(ActionListener l)         { discoverBtn.addActionListener(l); }
     /** 程序化触发抓取（如 Run2 后自动执行） */
     void triggerCrawl()                     { crawlClickBtn.doClick(); }
     void onClearTable(ActionListener l)      { clearTableBtn.addActionListener(l); }
