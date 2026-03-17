@@ -160,8 +160,8 @@ public class ApiDiscoveryService {
             URL url = new URL(urlStr);
             conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
             conn.setRequestProperty("User-Agent", "AuthAnalyzer/1.0");
             int code = conn.getResponseCode();
             if (code >= 200 && code < 300) {

@@ -111,6 +111,11 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     private JPanel createDiscoveredApiSection() {
         JPanel wrap = new JPanel(new BorderLayout());
         wrap.setBorder(javax.swing.BorderFactory.createTitledBorder("发现的隐藏 API"));
+        JPanel toolbar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 2));
+        JButton clearDiscoveredBtn = new JButton("清空");
+        clearDiscoveredBtn.addActionListener(e -> discoveredApiListPanel.clear());
+        toolbar.add(clearDiscoveredBtn);
+        wrap.add(toolbar, BorderLayout.NORTH);
         wrap.add(new JScrollPane(discoveredApiListPanel), BorderLayout.CENTER);
         wrap.setMinimumSize(new Dimension(0, 120));
         return wrap;
@@ -191,12 +196,8 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                     }
                 };
 
-                if (fromSwagger) {
-                    java.util.List<DiscoveredEndpoint> swagger = service.discoverFromSwagger(targetUrl, cb);
-                    all.addAll(swagger);
-                }
-
                 if (fromJs) {
+                    log("[API 发现] 正在启动浏览器...");
                     WebDriver driver = ProxyDriverManager.getOrStartDriver(true, PROXY_HOST, PROXY_PORT, false);
                     if (driver != null) {
                         try {
@@ -210,6 +211,11 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                             for (DiscoveredEndpoint ep : js) {
                                 if (!all.contains(ep)) all.add(ep);
                             }
+                            final java.util.List<DiscoveredEndpoint> jsList = new java.util.ArrayList<>(all);
+                            SwingUtilities.invokeLater(() -> {
+                                discoveredApiListPanel.setEndpoints(jsList);
+                                log("[API 发现] JS 完成，已发现 " + jsList.size() + " 个端点");
+                            });
                         } catch (Throwable t) {
                             log("[API 发现] JS 提取出错: " + t.getMessage());
                         } finally {
@@ -221,11 +227,17 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                     }
                 }
 
-                final java.util.List<DiscoveredEndpoint> finalList = all;
-                SwingUtilities.invokeLater(() -> {
-                    discoveredApiListPanel.setEndpoints(finalList);
-                    log("[API 发现] 完成，共发现 " + finalList.size() + " 个端点");
-                });
+                if (fromSwagger) {
+                    java.util.List<DiscoveredEndpoint> swagger = service.discoverFromSwagger(targetUrl, cb);
+                    for (DiscoveredEndpoint ep : swagger) {
+                        if (!all.contains(ep)) all.add(ep);
+                    }
+                    final java.util.List<DiscoveredEndpoint> finalList = all;
+                    SwingUtilities.invokeLater(() -> {
+                        discoveredApiListPanel.setEndpoints(finalList);
+                        log("[API 发现] 完成，共发现 " + finalList.size() + " 个端点");
+                    });
+                }
             } catch (Throwable ex) {
                 log("[API 发现] 出错: " + ex.getMessage());
                 ex.printStackTrace(stderr);
