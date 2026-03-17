@@ -136,7 +136,12 @@ public class DiscoveredApiListPanel extends JPanel {
             DiscoveredEndpoint e = endpoints.get(rowIndex);
             switch (columnIndex) {
                 case 0: return e.getMethod();
-                case 1: return e.getPath();
+                case 1:
+                    String path = e.getPath();
+                    if (e.getGraphqlOperation() != null && !e.getGraphqlOperation().isEmpty()) {
+                        path = path + " → " + e.getGraphqlOperation();
+                    }
+                    return path;
                 case 2: return e.getSource().toString();
                 default: return "";
             }

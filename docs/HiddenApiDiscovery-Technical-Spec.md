@@ -9,7 +9,7 @@
 | 项目 | 说明 |
 |------|------|
 | **目标** | 发现页面上无入口的 API，送入 Analyzer 进行越权检测 |
-| **发现方式** | ① 从 JS 提取 ② 从 Swagger 探测 |
+| **发现方式** | ① 从 JS 提取 ② Source Map 二次提取 ③ 从 Swagger/Actuator 探测 ④ GraphQL 内省 |
 | **下游** | 构造 HTTP 请求 → `performAuthAnalyzerRequest` → RequestController.analyze → 主表 + 越权判定 |
 
 ---
@@ -29,9 +29,11 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 发现阶段                                                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ JS 提取:  WebDriver → 注入 Cookie → 导航 → <script> 解析 → 正则提取 → Set     │
-│ Swagger:  HTTP GET 探测路径 → 解析 JSON paths → 提取 method+path → Set        │
-│ 输出:     List<DiscoveredEndpoint> (去重: equals = method+path)               │
+│ JS 提取:    WebDriver → 注入 Cookie → 导航 → <script> 解析 → 正则提取 → Set   │
+│ Source Map: scriptUrl + ".map" → sourcesContent → 正则二次提取 → Set          │
+│ Swagger:    HTTP GET 探测 SWAGGER_PATHS → 解析 JSON/Actuator → Set           │
+│ GraphQL:    POST Introspection → 解析 __schema → Query/Mutation → Set         │
+│ 输出:       List<DiscoveredEndpoint> (去重: method+path+graphqlOperation)     │
 └─────────────────────────────────────────────────────────────────────────────┘
                                         │
                                         ▼
@@ -65,24 +67,36 @@
 |------|------|------|
 | method | String | HTTP 方法，默认 "GET"，构造时 toUpperCase |
 | path | String | 路径，如 `/v3/api/news/v1/mylist` |
-| source | Source | JS 或 SWAGGER |
+| source | Source | JS、SWAGGER、SOURCE_MAP、GRAPHQL |
+| endpointSchema | EndpointSchema | 仅 Swagger 来源时有值，用于智能参数替换和 Body 生成 |
+| graphqlOperation | String | 仅 GraphQL 来源时可能有值，用于构造 query body |
 
-**相等性**：`equals` 与 `hashCode` 仅基于 `method + path`，用于去重。
+**相等性**：`equals` 与 `hashCode` 基于 `method + path + graphqlOperation`，用于去重。
 
 ```java
 // 位置: uitesting/discovery/DiscoveredEndpoint.java
 @Override
 public boolean equals(Object o) {
     DiscoveredEndpoint that = (DiscoveredEndpoint) o;
-    return method.equals(that.method) && path.equals(that.path);
+    if (!method.equals(that.method) || !path.equals(that.path)) return false;
+    String g1 = graphqlOperation, g2 = that.graphqlOperation;
+    return (g1 == null ? g2 == null : g1.equals(g2));
 }
 @Override
 public int hashCode() {
-    return 31 * method.hashCode() + path.hashCode();
+    int h = 31 * method.hashCode() + path.hashCode();
+    return graphqlOperation != null ? 31 * h + graphqlOperation.hashCode() : h;
 }
 ```
 
-### 3.2 上游配置（ControlsPanel）
+### 3.2 EndpointSchema
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| pathParams | Map<String, ParamSchema> | 路径参数 name → type/format |
+| requestBodySchema | JsonObject | OpenAPI requestBody schema |
+
+### 3.3 上游配置（ControlsPanel）
 
 | 配置项 | 来源 | 用途 |
 |--------|------|------|
@@ -90,7 +104,7 @@ public int hashCode() {
 | headersToReplace | headersToReplaceText.getText() | Cookie 注入、buildRequest 头注入 |
 | fromJs / fromSwagger | discoverFromJsCheck / discoverFromSwaggerCheck | 控制执行分支 |
 
-### 3.3 下游接口（Burp / RequestController）
+### 3.4 下游接口（Burp / RequestController）
 
 | 接口 | 输入 | 输出 |
 |------|------|------|
@@ -117,11 +131,11 @@ public int hashCode() {
    IF script.src 非空:
      scriptUrl = toAbsoluteUrl(src, baseOrigin)
      content = fetchUrlContent(scriptUrl)   // HTTP GET, 3s 超时
+     IF content 非空: extractFromJsContent(content, result, JS)
+     extractFromSourceMap(scriptUrl, result, callback)
    ELSE:
      content = script.getAttribute("innerHTML")
-
-   IF content 非空:
-     extractFromJsContent(content, result)
+     IF content 非空: extractFromJsContent(content, result, JS)
 
 4. RETURN result (LinkedHashSet 保证去重与顺序)
 ```
@@ -135,7 +149,7 @@ FOR EACH pattern IN JS_PATTERNS:
     path = (pattern == axios) ? group(2) : group(1)
     method = (pattern == axios) ? group(1).toUpperCase() : "GET"
     IF path != null AND isRelevantPath(path):
-      result.add(DiscoveredEndpoint(method, path, JS))
+      result.add(DiscoveredEndpoint(method, path, source))
 ```
 
 **isRelevantPath(path)**：
@@ -156,7 +170,18 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
 | 4 | `['"\`](/api/[^'"\`\\s?]*)[?"'\`]?` | "/api/xxx" |
 | 5 | `['"\`](/v[0-9]+/[^'"\`\\s?]*)[?"'\`]?` | "/v3/api/xxx" |
 
-### 4.2 从 Swagger 探测（discoverFromSwagger）
+### 4.2 Source Map 提取（extractFromSourceMap）
+
+```
+mapUrl = scriptUrl.endsWith(".map") ? scriptUrl : scriptUrl + ".map"
+content = fetchUrlContent(mapUrl)
+root = JsonParser.parseString(content)
+sourcesContent = root.getAsJsonArray("sourcesContent")
+FOR EACH el IN sourcesContent:
+  IF el.isJsonPrimitive(): extractFromJsContent(el.getAsString(), result, SOURCE_MAP)
+```
+
+### 4.3 从 Swagger 探测（discoverFromSwagger）
 
 **输入**：String baseUrl, DiscoveryCallback callback  
 **输出**：List<DiscoveredEndpoint>
@@ -164,13 +189,20 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
 ```
 1. baseOrigin = getBaseOrigin(baseUrl)
 
-2. FOR docPath IN ["/swagger.json", "/swagger/v1/swagger.json", "/v2/api-docs",
-                   "/v3/api-docs", "/api-docs", "/api/swagger.json", "/openapi.json"]:
+2. FOR docPath IN SWAGGER_PATHS:
    docUrl = baseOrigin + docPath
-   json = fetchUrlContent(docUrl)
-   IF json 为空: CONTINUE
+   content = fetchUrlContent(docUrl)
+   IF content 为空: CONTINUE
 
-   root = JsonParser.parseString(json).getAsJsonObject()
+   IF docPath 含 "graphql":
+     result.addAll(discoverFromGraphQLIntrospection(docUrl, callback))
+     CONTINUE
+   IF docPath 含 "actuator/mappings":
+     result.addAll(discoverFromActuatorMappings(content, baseOrigin, callback))
+     CONTINUE
+
+   IF content 不以 "{" 开头: CONTINUE   // 非 JSON
+   root = JsonParser.parseString(content).getAsJsonObject()
    paths = root.getAsJsonObject("paths")
    IF paths == null: CONTINUE
 
@@ -178,32 +210,60 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
      pathObj = paths.getAsJsonObject(path)
      FOR method IN pathObj.keySet():
        IF method IN {get,post,put,delete,patch}:
-         result.add(DiscoveredEndpoint(method.toUpperCase(), path, SWAGGER))
+         schema = parseEndpointSchema(pathObj, method)
+         result.add(DiscoveredEndpoint(method.toUpperCase(), path, SWAGGER, schema))
 
    BREAK   // 命中即停止
 
 3. RETURN result
 ```
 
-### 4.3 合成请求构造（SyntheticRequestBuilder.buildAndExecute）
+**SWAGGER_PATHS**：/swagger.json, /swagger/v1/swagger.json, /v2/api-docs, /v3/api-docs, /v3/api-docs.yaml, /api-docs, /api/swagger.json, /openapi.json, /openapi.yaml, /api/openapi.json, /actuator/mappings, /actuator/env, /graphql, /v1/graphql, /api/graphql
+
+### 4.4 GraphQL 内省（discoverFromGraphQLIntrospection）
+
+```
+POST graphqlUrl, body = Introspection Query
+resp = fetchUrlContentPost(graphqlUrl, query, "application/json")
+IF resp 不含 "__schema": RETURN []
+
+schema = data.__schema
+queryTypeName = schema.queryType.name
+mutationTypeName = schema.mutationType.name
+
+result.add(DiscoveredEndpoint("POST", path, GRAPHQL, null, null))   // 基础端点
+
+FOR type IN schema.types:
+  IF type.kind != "OBJECT" OR type.name 以 "__" 开头: CONTINUE
+  IF type.name != queryTypeName AND type.name != mutationTypeName: CONTINUE
+  FOR field IN type.fields:
+    result.add(DiscoveredEndpoint("POST", path, GRAPHQL, null, field.name))
+```
+
+### 4.5 合成请求构造（SyntheticRequestBuilder.buildAndExecute）
 
 **输入**：DiscoveredEndpoint endpoint, String baseUrl, String headersToReplace, Consumer<String> log  
 **输出**：IHttpRequestResponse 或 null
 
 ```
-1. fullUrl = buildFullUrl(baseUrl, endpoint.getPath())
-   - origin = protocol + "://" + host + (port 非 80/443 时 ":" + port)
-   - path = path.replaceAll("\\{[^}]+\\}", "1")
+1. fullUrl = buildFullUrl(baseUrl, endpoint)
+   - 若有 EndpointSchema 且 pathParams 非空:
+     path = SchemaBasedBodyGenerator.replacePathParams(path, schema.getPathParams())
+   - 否则: path = path.replaceAll("\\{[^}]+\\}", "1")
    - fullUrl = origin + path
 
 2. url = new URL(fullUrl)
    service = buildHttpService(host, port, isHttps)
 
-3. requestBytes = buildRequest(helpers, url, method, headersToReplace)
+3. requestBytes = buildRequest(helpers, url, endpoint, headersToReplace)
+   - 若 method 为 POST/PUT/PATCH:
+     - GraphQL: body = {"query":"query {op} { __typename }"} 或 {"query":"{ __typename }"}
+     - 有 requestBodySchema: body = SchemaBasedBodyGenerator.generateRequestBody(schema)
+     - 否则: body = "{}"
+   - 若 method 为 GET: body = 空
    - baseRequest = helpers.buildHttpRequest(url)
    - 若 method != GET: 替换首行请求行为 "METHOD path HTTP/1.1"
-   - 解析 headersToReplace 每行 "Name: Value"
-   - 按 header 名匹配现有 headers，替换或追加
+   - 解析 headersToReplace 每行 "Name: Value"，按 header 名匹配替换或追加
 
 4. rr = makeHttpRequest(service, requestBytes)
 5. RETURN rr
@@ -216,10 +276,15 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
 | 功能 | 类 | 方法/常量 |
 |------|-----|-----------|
 | DiscoveredEndpoint | `uitesting/discovery/DiscoveredEndpoint.java` | 全类 |
+| EndpointSchema | `uitesting/discovery/EndpointSchema.java` | 全类 |
+| SchemaBasedBodyGenerator | `uitesting/discovery/SchemaBasedBodyGenerator.java` | replacePathParams, generateRequestBody |
 | JS 提取 | `uitesting/discovery/ApiDiscoveryService.java` | discoverFromJs, extractFromJsContent, isRelevantPath |
+| Source Map | `uitesting/discovery/ApiDiscoveryService.java` | extractFromSourceMap |
 | Swagger 探测 | `uitesting/discovery/ApiDiscoveryService.java` | discoverFromSwagger |
+| Actuator 解析 | `uitesting/discovery/ApiDiscoveryService.java` | discoverFromActuatorMappings |
+| GraphQL 内省 | `uitesting/discovery/ApiDiscoveryService.java` | discoverFromGraphQLIntrospection |
 | 正则与路径 | `uitesting/discovery/ApiDiscoveryService.java` | JS_PATTERNS, SWAGGER_PATHS |
-| HTTP 获取 | `uitesting/discovery/ApiDiscoveryService.java` | fetchUrlContent (3s connect/read) |
+| HTTP 获取 | `uitesting/discovery/ApiDiscoveryService.java` | fetchUrlContent, fetchUrlContentPost |
 | 合成请求 | `uitesting/discovery/SyntheticRequestBuilder.java` | buildAndExecute, buildFullUrl, buildRequest |
 | 列表展示 | `gui/UITesting/DiscoveredApiListPanel.java` | setEndpoints, clear, getAllEndpoints |
 | 发现触发 | `gui/UITesting/UITestingPanel.java` | onDiscoverClick |
@@ -238,16 +303,20 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
 |--------|----------|
 | JS 正则是否漏报 | 在目标 JS 中手工加入 `fetch('/api/test')`，确认能发现 |
 | JS 正则是否误报 | 检查注释、字符串常量中的 `/api/xxx` 是否被误匹配 |
+| Source Map | 确认 scriptUrl + ".map" 可访问时，sourcesContent 被正确解析并二次提取 |
 | 路径过滤 | 确认 `.css`、`.png` 等被排除，`/api`、`/v`、`/internal` 被保留 |
 | Swagger 解析 | 对标准 OpenAPI 2.0/3.0 文档验证 paths 解析正确 |
-| 占位符替换 | `/api/user/{id}` → `/api/user/1`，请求可发出 |
+| Actuator 解析 | 对 Spring Boot actuator/mappings 验证 predicate 解析正确 |
+| GraphQL 内省 | 对 GraphQL 端点验证 Introspection 返回的 Query/Mutation 被正确提取 |
+| 路径参数 | 有 schema 时按 type/format 替换，无 schema 时 `/api/user/{id}` → `/api/user/1` |
+| RequestBody | 有 schema 时按 properties 生成 JSON，GraphQL 时生成 query body |
 | 请求头注入 | 验证 Cookie 等正确注入，服务端能识别身份 |
 
 ### 6.2 严谨性
 
 | 检查项 | 说明 |
 |--------|------|
-| 去重 | DiscoveredEndpoint.equals 基于 method+path，LinkedHashSet 去重 |
+| 去重 | DiscoveredEndpoint.equals 基于 method+path+graphqlOperation，LinkedHashSet 去重 |
 | 空值 | endpoint/baseUrl 为 null 时 buildAndExecute 返回 null，不抛异常 |
 | 超时 | fetchUrlContent 使用 3s connect/read，避免长时间阻塞 |
 | 线程 | 发现在后台线程，UI 更新经 SwingUtilities.invokeLater |
@@ -269,8 +338,9 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
 2. **配置**：Target URL、Header(s) to Replace（含有效 Cookie）
 3. **仅 JS**：勾选「从 JS 提取」，点击「发现隐藏 API」→ 浏览器启动 → 列表更新
 4. **仅 Swagger**：勾选「从 Swagger 探测」，目标有 `/swagger.json` 等 → 列表更新
-5. **送入 Analyzer**：点击「抓取并点击」→ 抓取完成 → 发现列表中的 API 自动入主表
-6. **验证**：主表出现对应请求，各 Session 有 SAME/SIMILAR/DIFFERENT 判定
+5. **GraphQL**：目标有 `/graphql` 且开启内省 → 探测时自动发现 Query/Mutation
+6. **送入 Analyzer**：点击「抓取并点击」→ 抓取完成 → 发现列表中的 API 自动入主表
+7. **验证**：主表出现对应请求，各 Session 有 SAME/SIMILAR/DIFFERENT 判定
 
 ---
 
@@ -278,10 +348,11 @@ RETURN true IF: startsWith("/api") OR startsWith("/v") OR startsWith("/internal"
 
 - **误报**：正则可能匹配注释、文档字符串中的路径
 - **非隐藏**：部分 API 由页面正常触发，仍会被发现
-- **路径参数**：`{id}` 仅替换为 `"1"`，未做多值探测
+- **路径参数**：无 schema 时 `{id}` 仅替换为 `"1"`，未做多值探测
 - **JS 覆盖**：仅处理 `<script src>` 与内联 script，动态加载的 script 可能遗漏
+- **YAML**：SWAGGER_PATHS 含 `.yaml`，但当前仅解析 JSON，YAML 需额外解析逻辑
 
 ---
 
-**文档版本**：1.0  
+**文档版本**：1.1  
 **最后更新**：2026-02-26
