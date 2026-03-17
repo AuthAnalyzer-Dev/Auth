@@ -207,7 +207,8 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                             applyCookies(driver, targetUrl, true);
                             driver.get(targetUrl);
                             Thread.sleep(800);
-                            java.util.List<DiscoveredEndpoint> js = service.discoverFromJs(driver, targetUrl, cb);
+                            String headers = controls.getHeadersToReplaceText();
+                            java.util.List<DiscoveredEndpoint> js = service.discoverFromJs(driver, targetUrl, cb, headers);
                             for (DiscoveredEndpoint ep : js) {
                                 if (!all.contains(ep)) all.add(ep);
                             }

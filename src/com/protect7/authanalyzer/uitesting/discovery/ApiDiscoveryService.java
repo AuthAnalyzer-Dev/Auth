@@ -22,8 +22,13 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 import org.openqa.selenium.By;
 import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 import org.yaml.snakeyaml.Yaml;
 
@@ -37,11 +42,26 @@ public class ApiDiscoveryService {
     private static final int MAX_DISCOVERED_LIMIT = 2000;
 
     private static final Pattern[] JS_PATTERNS = {
+        // 1. fetch('/api/xxx')
         Pattern.compile("fetch\\s*\\(\\s*['\"`](/[^'\"`\\s]+)['\"`]"),
+        // 2. axios.get/post/put/delete/patch
         Pattern.compile("axios\\.(get|post|put|delete|patch)\\s*\\(\\s*['\"`](/[^'\"`\\s]+)['\"`]"),
+        // 3. url: '/api/xxx'
         Pattern.compile("url\\s*:\\s*['\"`](/[^'\"`\\s]+)['\"`]"),
+        // 4. "/api/xxx" 字面量
         Pattern.compile("['\"`](/api/[^'\"`\\s?]*)[?\"'`]?"),
+        // 5. "/v3/api/xxx" 字面量
         Pattern.compile("['\"`](/v[0-9]+/[^'\"`\\s?]*)[?\"'`]?"),
+        // 6. "/internal/xxx"
+        Pattern.compile("['\"`](/internal/[^'\"`\\s?]*)[?\"'`]?"),
+        // 7. 相对路径 api/xxx、./api/xxx
+        Pattern.compile("['\"`]((?:\\./)?(?:api|v[0-9]+|internal)/[^'\"`\\s?]*)[?\"'`]?"),
+        // 8. 模板字符串 `/api/user/${id}` -> 归一化为 /api/user/1
+        Pattern.compile("`((?:/api|/v[0-9]+|/internal)/[^`]*)`"),
+        // 9. 字符串拼接 "/api/" + x 或 '/api/user/' + id
+        Pattern.compile("['\"`]((?:/api|/v[0-9]+|/internal)/[^'\"`]*?)['\"`]\\s*\\+"),
+        // 10. $.get('/api/xxx') $.post('/api/xxx')
+        Pattern.compile("\\$\\.(get|post)\\s*\\(\\s*['\"`](/[^'\"`\\s]+)['\"`]"),
     };
 
     /** 扩充后的探测路径：Swagger、Actuator、GraphQL、文档 */
@@ -69,45 +89,42 @@ public class ApiDiscoveryService {
 
     private static final Pattern CHUNK_OR_ASSET_URL = Pattern.compile(
             "['\"`](/[^'\"`\\s]*(?:chunk|main|bundle|runtime|vendor)[^'\"`\\s]*\\.js)[?'\"`]?");
+    /** 动态 import() 加载的脚本（含 webpack 魔法注释，括号内可含注释再跟路径） */
+    private static final Pattern DYNAMIC_IMPORT_URL = Pattern.compile(
+            "import\\s*\\([^)]*['\"`]((?:\\./|\\.\\./)?[^'\"`\\s]*\\.js)['\"`]");
+    /** 通用 .js 路径（用于发现更多动态加载脚本） */
+    private static final Pattern ANY_SCRIPT_URL = Pattern.compile(
+            "['\"`](/[^'\"`\\s]{8,}\\.js)[?'\"`]?");
+    /** AMD require(['path']) 动态加载 */
+    private static final Pattern AMD_REQUIRE_URL = Pattern.compile(
+            "require\\s*\\(\\s*\\[\\s*['\"`]([^'\"`\\s]*\\.js)['\"`]");
+    /** new Worker('path') / new SharedWorker('path') */
+    private static final Pattern WORKER_URL = Pattern.compile(
+            "new\\s+(?:Shared)?Worker\\s*\\(\\s*['\"`]([^'\"`\\s]*\\.js)['\"`]");
 
     private static final int MAX_CHUNK_FETCH_DEPTH = 3;
 
     /**
      * 从当前页面的 JS 文件中提取 API 端点。
+     * @param headersToReplace 用于静态降级时注入 Cookie 等，可为 null
      */
-    public List<DiscoveredEndpoint> discoverFromJs(WebDriver driver, String baseUrl, DiscoveryCallback callback) {
+    public List<DiscoveredEndpoint> discoverFromJs(WebDriver driver, String baseUrl, DiscoveryCallback callback, String headersToReplace) {
         Set<DiscoveredEndpoint> result = new LinkedHashSet<>();
-        if (driver == null || baseUrl == null) return new ArrayList<>(result);
+        if (baseUrl == null) return new ArrayList<>(result);
 
         String baseOrigin = getBaseOrigin(baseUrl);
         Set<String> fetchedUrls = new HashSet<>();
         int[] sourceMapAdded = { 0 };
 
         try {
-            fetchAndExtractFromManifest(baseOrigin, result, fetchedUrls, callback, sourceMapAdded);
+            fetchAndExtractFromManifest(baseOrigin, result, fetchedUrls, callback, sourceMapAdded, headersToReplace);
 
-            List<WebElement> scripts = driver.findElements(By.tagName("script"));
-            for (WebElement script : scripts) {
-                String src = script.getAttribute("src");
-                String content = null;
+            List<ScriptInfo> scriptInfos = collectScriptInfos(driver, baseUrl, baseOrigin, callback, headersToReplace);
 
-                if (src != null && !src.trim().isEmpty()) {
-                    String scriptUrl = toAbsoluteUrl(src, baseOrigin);
-                    if (callback != null) callback.onProgress("正在获取: " + scriptUrl);
-                    content = fetchUrlContent(scriptUrl);
-                    if (content != null && !content.isEmpty()) {
-                        extractFromJsContent(content, result, DiscoveredEndpoint.Source.JS);
-                        extractAndFetchChunkScripts(content, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded);
-                    }
-                    sourceMapAdded[0] += extractFromSourceMap(scriptUrl, result, callback);
-                } else {
-                    content = script.getAttribute("innerHTML");
-                    if (content != null && !content.isEmpty()) {
-                        extractFromJsContent(content, result, DiscoveredEndpoint.Source.JS);
-                        extractAndFetchChunkScripts(content, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded);
-                    }
-                }
+            for (ScriptInfo info : scriptInfos) {
+                processScriptInfo(info, baseOrigin, result, fetchedUrls, callback, sourceMapAdded, headersToReplace);
             }
+
             if (sourceMapAdded[0] > 0 && callback != null) {
                 callback.onProgress("Source Map 额外发现 " + sourceMapAdded[0] + " 个 API");
             }
@@ -118,12 +135,91 @@ public class ApiDiscoveryService {
         return new ArrayList<>(result);
     }
 
+    public List<DiscoveredEndpoint> discoverFromJs(WebDriver driver, String baseUrl, DiscoveryCallback callback) {
+        return discoverFromJs(driver, baseUrl, callback, null);
+    }
+
+    private static final int DYNAMIC_SCRIPT_WAIT_MS = 2500;
+
+    private List<ScriptInfo> collectScriptInfos(WebDriver driver, String baseUrl, String baseOrigin,
+            DiscoveryCallback callback, String headersToReplace) {
+        List<ScriptInfo> scriptInfos = new ArrayList<>();
+        if (driver != null && isDriverAlive(driver)) {
+            try {
+                collectScriptsFromDom(driver, baseOrigin, scriptInfos, callback);
+                Thread.sleep(DYNAMIC_SCRIPT_WAIT_MS);
+                if (isDriverAlive(driver)) {
+                    int before = scriptInfos.size();
+                    collectScriptsFromDom(driver, baseOrigin, scriptInfos, callback);
+                    if (scriptInfos.size() > before && callback != null) {
+                        callback.onProgress("[API 发现] 等待动态加载后新增 " + (scriptInfos.size() - before) + " 个脚本");
+                    }
+                }
+                return scriptInfos;
+            } catch (WebDriverException e) {
+                if (callback != null) callback.onProgress("[API 发现] 浏览器会话已失效，切换至静态提取模式");
+                if (scriptInfos.isEmpty()) {
+                    return parseScriptTagsFromHtml(fetchPageHtml(baseUrl, headersToReplace), baseOrigin);
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return scriptInfos.isEmpty()
+                ? parseScriptTagsFromHtml(fetchPageHtml(baseUrl, headersToReplace), baseOrigin)
+                : scriptInfos;
+    }
+
+    private void collectScriptsFromDom(WebDriver driver, String baseOrigin, List<ScriptInfo> scriptInfos,
+            DiscoveryCallback callback) {
+        Set<String> seen = new HashSet<>();
+        for (ScriptInfo s : scriptInfos) seen.add(s.src != null ? s.src : "inline:" + (s.inlineContent != null ? s.inlineContent.hashCode() : ""));
+        try {
+            List<WebElement> scripts = driver.findElements(By.tagName("script"));
+            for (WebElement script : scripts) {
+                if (!isDriverAlive(driver)) throw new WebDriverException("session dead");
+                String src = script.getAttribute("src");
+                String inline = script.getAttribute("innerHTML");
+                if (src != null && !src.trim().isEmpty()) {
+                    String url = toAbsoluteUrl(src.trim(), baseOrigin);
+                    if (seen.add(url)) scriptInfos.add(new ScriptInfo(url, null));
+                } else if (inline != null && !inline.trim().isEmpty()) {
+                    String key = "inline:" + inline.hashCode();
+                    if (seen.add(key)) scriptInfos.add(new ScriptInfo(null, inline));
+                }
+            }
+        } catch (WebDriverException e) {
+            if (callback != null) callback.onProgress("[API 发现] 浏览器会话已失效，脚本切换至静态提取模式");
+            throw e;
+        }
+    }
+
+    private void processScriptInfo(ScriptInfo info, String baseOrigin, Set<DiscoveredEndpoint> result,
+            Set<String> fetchedUrls, DiscoveryCallback callback, int[] sourceMapAdded, String headersToReplace) {
+        String content = null;
+        String scriptUrl = null;
+        if (info.src != null) {
+            scriptUrl = info.src;
+            if (callback != null) callback.onProgress("正在获取: " + scriptUrl);
+            content = fetchStaticContent(scriptUrl, headersToReplace);
+        } else if (info.inlineContent != null) {
+            content = info.inlineContent;
+        }
+        if (content != null && !content.isEmpty()) {
+            extractFromJsContent(content, result, DiscoveredEndpoint.Source.JS);
+            extractAndFetchChunkScripts(content, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded, headersToReplace);
+        }
+        if (scriptUrl != null) {
+            sourceMapAdded[0] += extractFromSourceMap(scriptUrl, result, callback);
+        }
+    }
+
     private void fetchAndExtractFromManifest(String baseOrigin, Set<DiscoveredEndpoint> result,
-            Set<String> fetchedUrls, DiscoveryCallback callback, int[] sourceMapAdded) {
+            Set<String> fetchedUrls, DiscoveryCallback callback, int[] sourceMapAdded, String headersToReplace) {
         for (String manifestPath : new String[] { "/manifest.json", "/asset-manifest.json" }) {
             String url = baseOrigin + manifestPath;
             if (fetchedUrls.contains(url)) continue;
-            String content = fetchUrlContent(url);
+            String content = fetchStaticContent(url, headersToReplace);
             if (content == null || !content.trim().startsWith("{")) continue;
             try {
                 JsonObject root = JsonParser.parseString(content).getAsJsonObject();
@@ -138,7 +234,7 @@ public class ApiDiscoveryService {
                                 String path = v.getAsString();
                                 if (path != null && path.endsWith(".js")) {
                                     String fullUrl = toAbsoluteUrl(path, baseOrigin);
-                                    fetchChunkAndExtract(fullUrl, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded);
+                                    fetchChunkAndExtract(fullUrl, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded, headersToReplace);
                                 }
                             }
                         }
@@ -148,7 +244,7 @@ public class ApiDiscoveryService {
                                 String path = v.getAsString();
                                 if (path != null && path.endsWith(".js")) {
                                     String fullUrl = toAbsoluteUrl(path, baseOrigin);
-                                    fetchChunkAndExtract(fullUrl, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded);
+                                    fetchChunkAndExtract(fullUrl, baseOrigin, result, fetchedUrls, callback, 0, sourceMapAdded, headersToReplace);
                                 }
                             }
                         }
@@ -160,27 +256,36 @@ public class ApiDiscoveryService {
     }
 
     private void extractAndFetchChunkScripts(String content, String baseOrigin, Set<DiscoveredEndpoint> result,
-            Set<String> fetchedUrls, DiscoveryCallback callback, int depth, int[] sourceMapAdded) {
+            Set<String> fetchedUrls, DiscoveryCallback callback, int depth, int[] sourceMapAdded, String headersToReplace) {
         if (depth >= MAX_CHUNK_FETCH_DEPTH) return;
-        Matcher m = CHUNK_OR_ASSET_URL.matcher(content);
+        fetchScriptsFromPattern(content, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded, headersToReplace, CHUNK_OR_ASSET_URL);
+        fetchScriptsFromPattern(content, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded, headersToReplace, DYNAMIC_IMPORT_URL);
+        fetchScriptsFromPattern(content, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded, headersToReplace, AMD_REQUIRE_URL);
+        fetchScriptsFromPattern(content, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded, headersToReplace, WORKER_URL);
+        fetchScriptsFromPattern(content, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded, headersToReplace, ANY_SCRIPT_URL);
+    }
+
+    private void fetchScriptsFromPattern(String content, String baseOrigin, Set<DiscoveredEndpoint> result,
+            Set<String> fetchedUrls, DiscoveryCallback callback, int depth, int[] sourceMapAdded, String headersToReplace, Pattern pattern) {
+        Matcher m = pattern.matcher(content);
         while (m.find()) {
             String path = m.group(1);
             if (path == null || !path.endsWith(".js")) continue;
             String fullUrl = toAbsoluteUrl(path, baseOrigin);
-            fetchChunkAndExtract(fullUrl, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded);
+            fetchChunkAndExtract(fullUrl, baseOrigin, result, fetchedUrls, callback, depth, sourceMapAdded, headersToReplace);
         }
     }
 
     private void fetchChunkAndExtract(String scriptUrl, String baseOrigin, Set<DiscoveredEndpoint> result,
-            Set<String> fetchedUrls, DiscoveryCallback callback, int depth, int[] sourceMapAdded) {
+            Set<String> fetchedUrls, DiscoveryCallback callback, int depth, int[] sourceMapAdded, String headersToReplace) {
         if (scriptUrl == null || fetchedUrls.contains(scriptUrl)) return;
         fetchedUrls.add(scriptUrl);
         try {
             if (callback != null) callback.onProgress("正在获取 Chunk: " + scriptUrl);
-            String content = fetchUrlContent(scriptUrl);
+            String content = fetchStaticContent(scriptUrl, headersToReplace);
             if (content != null && !content.isEmpty()) {
                 extractFromJsContent(content, result, DiscoveredEndpoint.Source.JS);
-                extractAndFetchChunkScripts(content, baseOrigin, result, fetchedUrls, callback, depth + 1, sourceMapAdded);
+                extractAndFetchChunkScripts(content, baseOrigin, result, fetchedUrls, callback, depth + 1, sourceMapAdded, headersToReplace);
             }
             if (sourceMapAdded != null) sourceMapAdded[0] += extractFromSourceMap(scriptUrl, result, callback);
             else extractFromSourceMap(scriptUrl, result, callback);
@@ -534,22 +639,44 @@ public class ApiDiscoveryService {
     }
 
     private void extractFromJsContent(String content, Set<DiscoveredEndpoint> result, DiscoveredEndpoint.Source source) {
-        for (Pattern p : JS_PATTERNS) {
+        for (int i = 0; i < JS_PATTERNS.length; i++) {
+            Pattern p = JS_PATTERNS[i];
             Matcher m = p.matcher(content);
             while (m.find()) {
                 String path;
                 String method = "GET";
-                if (p == JS_PATTERNS[1]) {
+                if (i == 1) {
                     method = m.group(1) != null ? m.group(1).toUpperCase() : "GET";
+                    path = m.groupCount() >= 2 ? m.group(2) : null;
+                } else if (i == 9) {
+                    method = "get".equalsIgnoreCase(m.group(1) != null ? m.group(1) : "") ? "GET" : "POST";
                     path = m.groupCount() >= 2 ? m.group(2) : null;
                 } else {
                     path = m.group(1);
                 }
-                if (path != null && isRelevantPath(path) && result.size() < MAX_DISCOVERED_LIMIT) {
-                    result.add(new DiscoveredEndpoint(method, path, source));
+                if (path != null) {
+                    path = normalizePathForApi(path);
+                    if (path != null && isRelevantPath(path) && result.size() < MAX_DISCOVERED_LIMIT) {
+                        result.add(new DiscoveredEndpoint(method, path, source));
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * 归一化 API 路径：相对路径加 /、模板变量替换为 1、./ 去除。
+     */
+    private String normalizePathForApi(String path) {
+        if (path == null || path.isEmpty()) return null;
+        path = path.trim();
+        if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("//")) return null;
+        path = path.replaceAll("\\$\\{[^}]*\\}", "1");
+        if (path.startsWith("./")) path = path.substring(2);
+        if (path.startsWith("../")) path = path.replaceFirst("^\\.\\./", "");
+        if (!path.startsWith("/")) path = "/" + path;
+        if (path.length() < 2) return null;
+        return path;
     }
 
     private boolean isRelevantPath(String path) {
@@ -587,6 +714,113 @@ public class ApiDiscoveryService {
             if (conn != null) conn.disconnect();
         }
         return null;
+    }
+
+    /**
+     * 带 Header 注入的 HTTP GET，用于静态降级时获取需认证的 JS。
+     */
+    private String fetchUrlContentWithHeaders(String urlStr, String headersToReplace) {
+        HttpURLConnection conn = null;
+        try {
+            URL url = new URL(urlStr);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(3000);
+            conn.setReadTimeout(3000);
+            conn.setRequestProperty("User-Agent", "AuthAnalyzer/1.0");
+            if (headersToReplace != null && !headersToReplace.trim().isEmpty()) {
+                for (String line : headersToReplace.replace("\r", "").split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    int colon = line.indexOf(':');
+                    if (colon > 0) {
+                        String name = line.substring(0, colon).trim();
+                        String value = line.substring(colon + 1).trim();
+                        conn.setRequestProperty(name, value);
+                    }
+                }
+            }
+            int code = conn.getResponseCode();
+            if (code >= 200 && code < 300) {
+                try (BufferedReader r = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    StringBuilder sb = new StringBuilder();
+                    String line;
+                    while ((line = r.readLine()) != null) sb.append(line).append("\n");
+                    return sb.toString();
+                }
+            }
+            logFetchError("GET", urlStr, "HTTP " + code);
+        } catch (SocketTimeoutException e) {
+            logFetchError("GET", urlStr, "Timeout");
+        } catch (Exception e) {
+            logFetchError("GET", urlStr, e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+        return null;
+    }
+
+    /**
+     * 判断 WebDriver session 是否有效。
+     */
+    private boolean isDriverAlive(WebDriver driver) {
+        if (driver == null) return false;
+        try {
+            driver.getWindowHandles();
+            return true;
+        } catch (WebDriverException e) {
+            return false;
+        }
+    }
+
+    /**
+     * 静态提取：直接 HTTP GET 获取 JS 内容，支持 Header 注入。
+     */
+    private String fetchStaticContent(String scriptUrl, String headersToReplace) {
+        return headersToReplace != null && !headersToReplace.trim().isEmpty()
+                ? fetchUrlContentWithHeaders(scriptUrl, headersToReplace)
+                : fetchUrlContent(scriptUrl);
+    }
+
+    /**
+     * 获取页面 HTML（用于 driver 失效时的静态降级）。
+     */
+    private String fetchPageHtml(String pageUrl, String headersToReplace) {
+        return fetchStaticContent(pageUrl, headersToReplace);
+    }
+
+    /**
+     * 从 HTML 解析 script 标签，返回 (src, inlineContent) 列表。
+     */
+    private List<ScriptInfo> parseScriptTagsFromHtml(String html, String baseOrigin) {
+        List<ScriptInfo> list = new ArrayList<>();
+        if (html == null || html.isEmpty()) return list;
+        try {
+            Document doc = Jsoup.parse(html);
+            Elements scripts = doc.select("script");
+            for (Element el : scripts) {
+                String src = el.attr("src");
+                String inline = el.html();
+                if (src != null && !src.trim().isEmpty()) {
+                    list.add(new ScriptInfo(toAbsoluteUrl(src.trim(), baseOrigin), null));
+                } else if (inline != null && !inline.trim().isEmpty()) {
+                    list.add(new ScriptInfo(null, inline));
+                }
+            }
+        } catch (Exception ignore) {
+        }
+        return list;
+    }
+
+    private static class ScriptInfo {
+        final String src;
+        final String inlineContent;
+
+        ScriptInfo(String src, String inlineContent) {
+            this.src = src;
+            this.inlineContent = inlineContent;
+        }
     }
 
     private boolean looksLikeHtml(String content) {
@@ -643,6 +877,7 @@ public class ApiDiscoveryService {
         if (ref.startsWith("http://") || ref.startsWith("https://")) return ref;
         if (ref.startsWith("//")) return "https:" + ref;
         if (ref.startsWith("/")) return baseOrigin + ref;
+        ref = ref.replaceFirst("^\\.\\.?/+", "");
         return baseOrigin + "/" + ref;
     }
 

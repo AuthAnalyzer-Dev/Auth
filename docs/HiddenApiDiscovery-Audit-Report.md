@@ -8,14 +8,15 @@
 
 ## 一、审计发现的问题
 
-### 1. JS_PATTERNS 正则覆盖率不足
+### 1. JS_PATTERNS 正则覆盖率
 
-| 问题 | 说明 |
+| 问题 | 状态 |
 |------|------|
-| **ES6 模板字符串** | 模式已支持反引号 `` ` `` 包裹的静态路径，如 `` fetch(`/api/xxx`) ``，但**动态拼接**的模板字符串如 `` fetch(`/api/${id}`) `` 无法匹配，因路径被变量分割。 |
-| **动态拼接路径** | `"/api/" + basePath + "/list"`、`\`/api/\${id}\`` 等运行时拼接的路径无法被当前正则捕获。 |
-| **$.ajax / jQuery** | 已有 `url: '/api/xxx'` 模式，但 `$.get('/api/xxx')`、`$.post(url)` 等简写形式未覆盖。 |
-| **相对路径** | 当前模式要求路径以 `/` 开头，`api/user` 或 `./api/user` 会漏报。 |
+| **ES6 模板字符串** | ✅ 已覆盖：`` `(/api|/v\d+|/internal)/[^`]*` `` 匹配后归一化 `${...}` → `1` |
+| **动态拼接路径** | ✅ 已覆盖：`"/api/..." +` 模式提取前半段；`$.get`/`$.post` 已支持 |
+| **$.ajax / jQuery** | ✅ 已覆盖：`$.get('/api/xxx')`、`$.post('/api/xxx')` |
+| **相对路径** | ✅ 已覆盖：`api/xxx`、`./api/xxx`，normalizePathForApi 补前缀 |
+| **动态 script 加载** | ✅ 见 `docs/HiddenApiDiscovery-Dynamic-Loading-Audit.md` |
 
 ---
 

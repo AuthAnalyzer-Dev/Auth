@@ -349,8 +349,8 @@ FOR type IN schema.types:
 - **误报**：正则可能匹配注释、文档字符串中的路径
 - **非隐藏**：部分 API 由页面正常触发，仍会被发现
 - **路径参数**：无 schema 时 `{id}` 仅替换为 `"1"`，未做多值探测
-- **JS 覆盖**：仅处理 `<script src>` 与内联 script，动态加载的 script 可能遗漏
-- **YAML**：SWAGGER_PATHS 含 `.yaml`，但当前仅解析 JSON，YAML 需额外解析逻辑
+- **动态 script**：已覆盖 import()、AMD require、Worker、manifest、chunk、DOM 二次收集；详见 `HiddenApiDiscovery-Dynamic-Loading-Audit.md`。未覆盖：require.ensure、完全动态路径、iframe 子 frame
+- **YAML**：SWAGGER_PATHS 含 `.yaml`，已支持 SnakeYAML 解析
 
 ---
 

@@ -72,6 +72,11 @@
 | 3 | `url\s*:\s*['"`](/[^'"`\s]+)['"`]` | 1=path | $.ajax({ url: '/api/xxx' }) |
 | 4 | `['"`](/api/[^'"`\s?]*)[?"'`]?` | 1=path | "/api/xxx" 字符串 |
 | 5 | `['"`](/v[0-9]+/[^'"`\s?]*)[?"'`]?` | 1=path | "/v3/api/xxx" 字符串 |
+| 6 | `['"`](/internal/[^'"`\s?]*)[?"'`]?` | 1=path | "/internal/xxx" |
+| 7 | `['"`]((?:\./)?(?:api\|v[0-9]+\|internal)/[^'"`\s?]*)[?"'`]?` | 1=path | 相对路径 api/xxx、./api/xxx |
+| 8 | `` `((?:/api\|/v[0-9]+\|/internal)/[^`]*)` `` | 1=path | 模板字符串，归一化 `${...}`→1 |
+| 9 | `['"`]((?:/api\|/v[0-9]+\|/internal)/[^'"`]*?)['"`]\s*\+` | 1=path | 字符串拼接 "/api/" + x |
+| 10 | `\$\.(get\|post)\s*\(\s*['"`](/[^'"`\s]+)['"`]` | 1=method, 2=path | $.get('/api/xxx') |
 
 ### 3.3 路径过滤（isRelevantPath）
 
@@ -93,7 +98,28 @@
 ### 3.4 方法推断
 
 - 模式 2（axios）：从捕获组 1 获取 method（get/post/put/delete/patch）
+- 模式 10（$.get/post）：从捕获组 1 获取 method
 - 其他模式：默认 method = "GET"
+
+### 3.5 路径归一化（normalizePathForApi）
+
+- `${...}` → `1`
+- `./`、`../` 前缀去除
+- 相对路径补前导 `/`
+
+### 3.6 动态 script 发现（extractAndFetchChunkScripts）
+
+从 JS 内容中提取并递归获取的脚本 URL 模式：
+
+| 模式 | 说明 |
+|------|------|
+| CHUNK_OR_ASSET_URL | 含 chunk/main/bundle/runtime/vendor 的路径 |
+| DYNAMIC_IMPORT_URL | `import(...'path.js')`，含 Webpack 魔法注释 |
+| AMD_REQUIRE_URL | `require(['path.js'])` |
+| WORKER_URL | `new Worker('path')`、`new SharedWorker('path')` |
+| ANY_SCRIPT_URL | 任意 `/path/*.js`（路径 ≥ 8 字符） |
+
+递归深度：MAX_CHUNK_FETCH_DEPTH=3。DOM 收集：首次收集后等待 2.5s 再收集，合并动态注入的 script。详见 `HiddenApiDiscovery-Dynamic-Loading-Audit.md`。
 
 ---
 
@@ -308,8 +334,8 @@ GraphQL 端点通常为单一 URL，通过 Introspection 可获取所有 Query/M
 | **非隐藏** | 部分 API 可能由页面正常触发，仍会被发现并列出 |
 | **真正隐藏** | 建议对比「JS 发现的 API」与「抓取时实际请求的 API」，差集为更可疑的隐藏 API |
 | **路径参数** | 无 schema 时占位符仅替换为 "1"，未做多值探测 |
-| **JS 覆盖** | 仅处理 `<script src>` 与内联 script，动态加载的 script 可能遗漏 |
-| **YAML** | SWAGGER_PATHS 含 `.yaml`，但当前仅解析 JSON，YAML 需额外解析逻辑 |
+| **动态 script** | 已覆盖 import()、AMD、Worker、manifest、chunk、DOM 二次收集；未覆盖 require.ensure、完全动态路径、iframe。见 `HiddenApiDiscovery-Dynamic-Loading-Audit.md` |
+| **YAML** | SWAGGER_PATHS 含 `.yaml`，已支持 SnakeYAML 解析 |
 
 ---
 
