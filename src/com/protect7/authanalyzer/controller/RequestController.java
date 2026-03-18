@@ -200,10 +200,11 @@ public class RequestController {
 	}
 
 	/**
-	 * 规范化 URL 用于 endpoint 匹配，避免 Run1/Run2 因查询参数顺序、尾部斜杠等差异导致无法匹配。
+	 * 规范化 URL 用于 endpoint 匹配，避免 Run1/Run2 因插件修饰、参数顺序、尾部斜杠等差异导致相同 API 无法配对。
 	 */
 	private static String normalizeEndpointUrl(String path, String query) {
 		if (path == null) path = "";
+		path = path.replaceAll("/+", "/");
 		if (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
 		if (query == null || query.isEmpty()) return path;
 		String[] params = query.split("&");

@@ -5,11 +5,13 @@ import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
 import com.protect7.authanalyzer.gui.util.RequestTableModel;
 import com.protect7.authanalyzer.gui.util.TabVisibilityAware;
+import com.protect7.authanalyzer.controller.RequestController;
 import com.protect7.authanalyzer.uitesting.discovery.ApiDiscoveryService;
 import com.protect7.authanalyzer.uitesting.discovery.DiscoveredEndpoint;
 import com.protect7.authanalyzer.uitesting.discovery.SyntheticRequestBuilder;
 import com.protect7.authanalyzer.uitesting.runner.ProxyDriverManager;
 import com.protect7.authanalyzer.util.CurrentConfig;
+import com.protect7.authanalyzer.util.DomainHelper;
 import burp.BurpExtender;
 import burp.IHttpRequestResponse;
 import org.openqa.selenium.By;
@@ -379,19 +381,24 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 Thread.currentThread().interrupt();
                 log("[Crawl] 中断");
             } catch (WebDriverException wde) {
-                if (wde.getMessage() != null && wde.getMessage().contains("invalid session id")) {
-                    log("[Crawl] 浏览器会话已失效（可能已关闭），正在重启...");
+                String msg = wde.getMessage() != null ? wde.getMessage() : "";
+                boolean sessionDead = msg.contains("invalid session id") || msg.contains("may have died")
+                        || msg.contains("remote browser") || msg.contains("session not created");
+                if (sessionDead) {
+                    log("[Crawl] 浏览器已断开（可能已关闭或崩溃），正在重启...");
                     ProxyDriverManager.stopDriver();
                     try {
                         WebDriver newDriver = ProxyDriverManager.getOrStartDriver(true, PROXY_HOST, PROXY_PORT, false);
                         if (newDriver != null) {
                             log("[Crawl] 已重启，请再次点击抓取");
+                        } else {
+                            log("[Crawl] 重启失败，请检查 Chrome 是否已安装且版本与 ChromeDriver 匹配");
                         }
                     } catch (Throwable restartEx) {
-                        log("[Crawl] 重启失败: " + restartEx.getMessage());
+                        log("[Crawl] 重启失败: " + (restartEx.getMessage() != null ? restartEx.getMessage() : ""));
                     }
                 } else {
-                    log("[Crawl] 出错: " + wde.getMessage());
+                    log("[Crawl] 出错: " + msg);
                     wde.printStackTrace(stderr);
                 }
             } catch (Throwable ex) {
@@ -403,11 +410,77 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
     /** 抓取完成后回调，子类可覆盖以实现 Run2 等后续逻辑。在抓取线程中调用。 */
     protected void afterCrawlComplete(boolean success) {
-        if (success) sendDiscoveredApisToAnalyzer();
+        if (!success) return;
+        runDiscoveryAfterCrawl();
+        sendDiscoveredApisToAnalyzer();
+    }
+
+    /** 抓取完成后自动运行隐藏 API 发现（复用当前浏览器），避免漏检 */
+    protected void runDiscoveryAfterCrawl() {
+        String targetUrl = controls.getTargetUrl();
+        if (targetUrl == null || targetUrl.trim().isEmpty()) return;
+        boolean fromJs = controls.isDiscoverFromJsSelected();
+        boolean fromSwagger = controls.isDiscoverFromSwaggerSelected();
+        if (!fromJs && !fromSwagger) return;
+
+        java.util.List<DiscoveredEndpoint> discovered = new java.util.ArrayList<>();
+        ApiDiscoveryService service = new ApiDiscoveryService();
+        ApiDiscoveryService.DiscoveryCallback cb = new ApiDiscoveryService.DiscoveryCallback() {
+            @Override public void onProgress(String msg) { log("[API 发现] " + msg); }
+            @Override public void onError(String msg) { log("[API 发现] " + msg); }
+        };
+
+        if (fromJs) {
+            WebDriver driver = ProxyDriverManager.getDriver();
+            if (driver != null) {
+                try {
+                    driver.get(targetUrl);
+                    Thread.sleep(500);
+                    applyCookies(driver, targetUrl, false);
+                    driver.get(targetUrl);
+                    Thread.sleep(500);
+                    String headers = controls.getHeadersToReplaceText();
+                    java.util.List<DiscoveredEndpoint> js = service.discoverFromJs(driver, targetUrl, cb, headers);
+                    for (DiscoveredEndpoint ep : js) {
+                        if (!discovered.contains(ep)) discovered.add(ep);
+                    }
+                } catch (Throwable t) {
+                    log("[API 发现] 抓取后 JS 提取出错: " + (t.getMessage() != null ? t.getMessage() : ""));
+                }
+            }
+        }
+
+        if (fromSwagger) {
+            try {
+                java.util.List<DiscoveredEndpoint> swagger = service.discoverFromSwagger(targetUrl, cb);
+                for (DiscoveredEndpoint ep : swagger) {
+                    if (!discovered.contains(ep)) discovered.add(ep);
+                }
+            } catch (Throwable t) {
+                log("[API 发现] 抓取后 Swagger 探测出错: " + (t.getMessage() != null ? t.getMessage() : ""));
+            }
+        }
+
+        if (!discovered.isEmpty()) {
+            try {
+                SwingUtilities.invokeAndWait(() -> discoveredApiListPanel.addEndpoints(discovered));
+                log("[API 发现] 抓取后新发现 " + discovered.size() + " 个端点");
+            } catch (Exception e) {
+                log("[API 发现] 更新面板失败: " + (e.getMessage() != null ? e.getMessage() : ""));
+            }
+        }
     }
 
     /** 将发现的隐藏 API 构造请求并送入 Analyzer，与抓取到的非隐藏 API 一并完成越权检测。 */
     protected void sendDiscoveredApisToAnalyzer() {
+        sendDiscoveredApisToAnalyzer(false);
+    }
+
+    /**
+     * 将发现的隐藏 API 送入 Analyzer。
+     * @param sync true 时在当前线程同步执行，保证在调用时 Run 模式下完成，避免异步队列导致误记为下一 Run。
+     */
+    protected void sendDiscoveredApisToAnalyzer(boolean sync) {
         java.util.List<DiscoveredEndpoint> endpoints = discoveredApiListPanel.getAllEndpoints();
         if (endpoints == null || endpoints.isEmpty()) return;
 
@@ -415,14 +488,21 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         String headers = controls.getHeadersToReplaceText();
         if (baseUrl == null || baseUrl.trim().isEmpty()) return;
 
+        RequestController rc = CurrentConfig.getCurrentConfig().getRequestController();
+        int sent = 0;
         for (DiscoveredEndpoint ep : endpoints) {
             IHttpRequestResponse rr = SyntheticRequestBuilder.buildAndExecute(ep, baseUrl, headers, this::log);
             if (rr != null && rr.getRequest() != null) {
-                CurrentConfig.getCurrentConfig().performAuthAnalyzerRequest(rr);
+                if (sync) {
+                    rc.analyze(rr);
+                } else {
+                    CurrentConfig.getCurrentConfig().performAuthAnalyzerRequest(rr);
+                }
+                sent++;
             }
         }
-        if (!endpoints.isEmpty()) {
-            log("[API 发现] 已送入 Analyzer: " + endpoints.size() + " 个端点");
+        if (sent > 0) {
+            log("[API 发现] 已送入 Analyzer: " + sent + " 个端点" + (sync ? "（同步）" : ""));
         }
     }
 
@@ -469,39 +549,101 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         } catch (Throwable ignore) {}
     }
 
-    /** 尝试关闭可能阻塞的弹窗（浏览器版本提示、条款确认等），避免抓取卡住 */
+    /** 尝试关闭可能阻塞的弹窗，避免抓取卡住。策略：① 通用选择器 ② 中英文按钮文案 */
     private void tryDismissBlockingOverlays(WebDriver driver) {
         try {
-            String[] closeTexts = {"确认", "取消", "关闭", "知道了", "暂不", "同意", "接受"};
-            for (String text : closeTexts) {
+            if (tryClickByGenericSelectors(driver)) return;
+            if (tryClickByButtonText(driver)) return;
+        } catch (Throwable ignore) {}
+    }
+
+    /** 通用选择器：Bootstrap/Element UI/Ant Design 等常见模态框的关闭按钮（语言无关） */
+    private boolean tryClickByGenericSelectors(WebDriver driver) {
+        String[] selectors = {
+                "[data-dismiss='modal']",
+                ".modal .close, .modal-header .close",
+                ".el-dialog__close, .el-message-box__close",
+                ".ant-modal-close",
+                "[aria-label='Close']", "[aria-label='close']", "[aria-label='关闭']",
+                ".dialog-close, .modal-close, .btn-close"
+        };
+        try {
+            for (String sel : selectors) {
                 try {
-                    List<WebElement> btns = driver.findElements(By.xpath(
-                            "//button[contains(.,'" + text + "')] | //a[contains(.,'" + text + "')] | " +
-                            "//*[@role='button'][contains(.,'" + text + "')] | //input[@value='" + text + "']"));
-                    for (WebElement b : btns) {
-                        if (b.isDisplayed()) {
-                            try {
-                                b.click();
-                                Thread.sleep(300);
-                                return;
-                            } catch (Throwable ignore) {}
+                    List<WebElement> els = driver.findElements(By.cssSelector(sel));
+                    for (WebElement el : els) {
+                        if (el.isDisplayed() && el.isEnabled()) {
+                            el.click();
+                            Thread.sleep(300);
+                            return true;
                         }
                     }
                 } catch (Throwable ignore) {}
             }
-            List<WebElement> modals = driver.findElements(By.cssSelector(".modal, [role='dialog'], .el-dialog"));
-            for (WebElement m : modals) {
-                if (!m.isDisplayed()) continue;
+            List<WebElement> ariaBtns = driver.findElements(By.cssSelector("[aria-label]"));
+            for (WebElement b : ariaBtns) {
                 try {
-                    WebElement close = m.findElement(By.cssSelector(".close, .el-dialog__close, [aria-label='Close']"));
-                    if (close != null && close.isDisplayed()) {
-                        close.click();
-                        Thread.sleep(300);
-                        return;
+                    String label = b.getAttribute("aria-label");
+                    if (label != null && (label.equalsIgnoreCase("close") || label.contains("关闭"))) {
+                        if (b.isDisplayed() && b.isEnabled()) {
+                            b.click();
+                            Thread.sleep(300);
+                            return true;
+                        }
                     }
                 } catch (Throwable ignore) {}
             }
+            List<WebElement> modals = driver.findElements(By.cssSelector(".modal, [role='dialog'], [aria-modal='true'], .el-dialog, .ant-modal-wrap"));
+            for (WebElement m : modals) {
+                if (!m.isDisplayed()) continue;
+                for (String closeSel : new String[]{".close", ".el-dialog__close", ".ant-modal-close", "[aria-label='Close']", "[aria-label='close']", "[aria-label='关闭']"}) {
+                    try {
+                        List<WebElement> closes = m.findElements(By.cssSelector(closeSel));
+                        for (WebElement close : closes) {
+                            if (close.isDisplayed() && close.isEnabled()) {
+                                close.click();
+                                Thread.sleep(300);
+                                return true;
+                            }
+                        }
+                    } catch (Throwable ignore) {}
+                }
+            }
         } catch (Throwable ignore) {}
+        return false;
+    }
+
+    /** 按按钮文案匹配（中英文），用于无通用 class 的自定义弹窗 */
+    private boolean tryClickByButtonText(WebDriver driver) {
+        String[] closeTexts = {
+                "确认", "Confirm", "OK", "Ok",
+                "取消", "Cancel",
+                "关闭", "Close",
+                "知道了", "Got it", "I see", "Dismiss",
+                "暂不", "Not now", "Later",
+                "同意", "同意并继续", "Accept", "Agree",
+                "接受", "接受条款"
+        };
+        for (String text : closeTexts) {
+            try {
+                String escaped = text.replace("'", "\\'");
+                List<WebElement> btns = driver.findElements(By.xpath(
+                        "//button[contains(normalize-space(.),'" + escaped + "')] | " +
+                        "//a[contains(normalize-space(.),'" + escaped + "')] | " +
+                        "//*[@role='button'][contains(normalize-space(.),'" + escaped + "')] | " +
+                        "//input[@type='button' or @type='submit'][@value='" + escaped + "']"));
+                for (WebElement b : btns) {
+                    if (b.isDisplayed() && b.isEnabled()) {
+                        try {
+                            b.click();
+                            Thread.sleep(300);
+                            return true;
+                        } catch (Throwable ignore) {}
+                    }
+                }
+            } catch (Throwable ignore) {}
+        }
+        return false;
     }
 
     /** 等待页面就绪（document.readyState），缓解 SPA 异步渲染导致的「未找到」 */
@@ -734,27 +876,9 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     /** 判断两域名是否同根域（如 www.xxx.com 与 api.xxx.com） */
     private static boolean isSameRootDomain(String domainA, String domainB) {
         if (domainA == null || domainB == null) return false;
-        String rootA = getRootDomain(domainA);
-        String rootB = getRootDomain(domainB);
+        String rootA = DomainHelper.getRootDomain(domainA);
+        String rootB = DomainHelper.getRootDomain(domainB);
         return rootA != null && rootB != null && rootA.equalsIgnoreCase(rootB);
-    }
-
-    /** 提取根域名（如 www.example.com -> example.com，api.sub.example.com -> example.com） */
-    private static String getRootDomain(String host) {
-        if (host == null || host.isEmpty()) return host;
-        String h = host.trim().toLowerCase();
-        String[] parts = h.split("\\.");
-        if (parts.length <= 2) return h;
-        if (parts.length >= 3) {
-            String lastTwo = parts[parts.length - 2] + "." + parts[parts.length - 1];
-            if ("co.uk".equals(lastTwo) || "com.cn".equals(lastTwo) || "net.cn".equals(lastTwo)
-                    || "org.cn".equals(lastTwo) || "gov.cn".equals(lastTwo)) {
-                if (parts.length >= 4) {
-                    return parts[parts.length - 4] + "." + parts[parts.length - 3] + "." + lastTwo;
-                }
-            }
-        }
-        return parts[parts.length - 2] + "." + parts[parts.length - 1];
     }
 
     /** 根据 key 查找可点击元素，key 格式为 "a|..." 或 "btn|..." */
@@ -834,7 +958,9 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
             d.getWindowHandles();
             return d;
         } catch (WebDriverException wde) {
-            if (wde.getMessage() != null && wde.getMessage().contains("invalid session id")) {
+            String msg = wde.getMessage() != null ? wde.getMessage() : "";
+            if (msg.contains("invalid session id") || msg.contains("may have died")
+                    || msg.contains("remote browser") || msg.contains("session not created")) {
                 log("[Driver] 检测到失效会话，正在重启...");
                 ProxyDriverManager.stopDriver();
                 return ProxyDriverManager.getOrStartDriver(true, PROXY_HOST, PROXY_PORT, false);

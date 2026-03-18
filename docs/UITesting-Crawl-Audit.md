@@ -55,8 +55,10 @@
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 下游                                                                         │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│ afterCrawlComplete → sendDiscoveredApisToAnalyzer                             │
-│ （发现的隐藏 API 构造请求送入 Analyzer，与抓取到的非隐藏 API 一并越权检测）       │
+│ afterCrawlComplete → runDiscoveryAfterCrawl → sendDiscoveredApisToAnalyzer     │
+│ ① 抓取完成后自动运行隐藏 API 发现（复用浏览器，按勾选从 JS/Swagger 提取）         │
+│ ② 将发现的隐藏 API 构造请求送入 Analyzer，与抓取到的非隐藏 API 一并越权检测       │
+│ 对称采集：Run1 完成→super(发现+送入 A)→Run2；Run2 完成→送入 B（建立配对）        │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -218,7 +220,7 @@ http(s) 链接: 比较根域名 getRootDomain(hrefDomain) 与 getRootDomain(targ
 | **同根域过滤** | isHrefInScopeForAuth 基于 getRootDomain 比较，允许 www/api 等子域 |
 | **DOM 指纹** | 链接数量或 href 集合变化才视为状态切换，点赞等微调不触发 |
 | **Tab 兜底** | DOM 指纹未变化时，若元素有 role=button、ng-click、btnCur 等特征，仍记为状态切换 |
-| **弹窗处理** | goToTargetState 及每轮点击前调用 tryDismissBlockingOverlays，关闭「确认」「取消」「关闭」「知道了」等弹窗 |
+| **弹窗处理** | ① 通用选择器：Bootstrap/Element UI/Ant Design 的 .close、[data-dismiss]、[aria-label] 等 ② 中英文按钮文案：确认/Confirm、取消/Cancel、关闭/Close、知道了/Got it 等 |
 
 ---
 
@@ -227,11 +229,12 @@ http(s) 链接: 比较根域名 getRootDomain(hrefDomain) 与 getRootDomain(targ
 | 功能 | 文件 | 方法/类 |
 |------|------|---------|
 | 抓取主循环 | UITestingPanel.java | onCrawlClick |
+| 抓取后自动发现 | UITestingPanel.java | runDiscoveryAfterCrawl |
 | 进入目标状态 | UITestingPanel.java | goToTargetState |
 | 收集可点击元素 | UITestingPanel.java | collectClickableKeys |
 | 查找元素 | UITestingPanel.java | findClickableByKey, findAnchorByKey, findButtonByKey |
 | 状态切换判定 | UITestingPanel.java | getPageContentFingerprint, hasSubstantiveDomChange, looksLikeTabOrStateSwitcher |
-| 弹窗关闭 | UITestingPanel.java | tryDismissBlockingOverlays |
+| 弹窗关闭 | UITestingPanel.java | tryDismissBlockingOverlays, tryClickByGenericSelectors, tryClickByButtonText |
 | Key 提取（含兜底） | UITestingPanel.java | pickAnchorKey, getAttributeTrimmed, getFirstImgAlt |
 | 同根域过滤 | UITestingPanel.java | isHrefInScopeForAuth, isSameRootDomain, getRootDomain |
 | URL 比较 | UITestingPanel.java | normalizeUrlForCompare |
@@ -247,4 +250,5 @@ http(s) 链接: 比较根域名 getRootDomain(hrefDomain) 与 getRootDomain(targ
 | **元素漏采** | `pickAnchorKey` 在 text/href 皆空时返回 null，漏掉 `<a>` 包裹 `<svg>`/`<img>` 的图标按钮 | 兜底提取 `aria-label`、`title`、内部 `img[alt]` |
 | **同域过严** | `isHrefInScopeForAuth` 完全匹配域名，无法抓取 `api.xxx.com` 等子域 | 改为 `getRootDomain` 比较，允许 `www.xxx.com` 与 `api.xxx.com` 同根域 |
 | **Tab 未标记** | Angular Tab（如「即将开始」「最新活动」）因 getList() 异步加载，DOM 指纹延迟变化 | ① 点击后额外等待 SAME_PAGE_DOM_WAIT_MS ② `looksLikeTabOrStateSwitcher` 兜底（role=button、ng-click、btnCur） |
-| **弹窗卡住** | 浏览器版本提示等弹窗阻塞，导致点击失败或卡住 | `tryDismissBlockingOverlays` 在 goToTargetState 及每轮点击前关闭「取消」「关闭」「知道了」等按钮 |
+| **弹窗卡住** | 浏览器版本提示等弹窗阻塞，导致点击失败或卡住 | ① 通用选择器（Bootstrap/Element UI/Ant Design）② 中英文按钮文案（Confirm/Cancel/Close 等） |
+| **抓取后漏发现** | 抓取完页面链接后未自动运行隐藏 API 发现 | `runDiscoveryAfterCrawl`：抓取完成后按勾选从 JS/Swagger 提取，addEndpoints 合并后送入 Analyzer |

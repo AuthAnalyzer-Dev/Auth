@@ -125,13 +125,22 @@ public class MergedUITestingPanel extends UITestingPanel implements IAnalyzerHos
     @Override
     protected void afterCrawlComplete(boolean success) {
         if (!success) return;
-        if (!CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled()
-                || CurrentConfig.getCurrentConfig().isSymmetricRun2Mode()) return;
-        SwingUtilities.invokeLater(() -> {
-            if (configurationPanel.performRun2Transition()) {
-                log("[Crawl] Run1 完成，自动进入 Run2...");
-                triggerRun2Crawl();
-            }
-        });
+        boolean symmetric = CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled();
+        boolean run2Mode = CurrentConfig.getCurrentConfig().isSymmetricRun2Mode();
+
+        if (symmetric && !run2Mode) {
+            runDiscoveryAfterCrawl();
+            sendDiscoveredApisToAnalyzer(true);
+            SwingUtilities.invokeLater(() -> {
+                if (configurationPanel.performRun2Transition()) {
+                    log("[Crawl] Run1 完成（含发现 API），自动进入 Run2...");
+                    triggerRun2Crawl();
+                }
+            });
+        } else if (symmetric && run2Mode) {
+            sendDiscoveredApisToAnalyzer();
+        } else {
+            super.afterCrawlComplete(true);
+        }
     }
 }

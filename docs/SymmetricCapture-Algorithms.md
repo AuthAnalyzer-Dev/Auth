@@ -8,14 +8,17 @@
 
 ### 1.1 Endpoint 键的构成
 
-同一 API 在 Run1 与 Run2 中可能因 URL 格式差异（查询参数顺序、尾部斜杠等）无法匹配，需统一规范化。
+同一 API 在 Run1 与 Run2 中可能因插件修饰、不同来源（抓取 vs 发现）等造成格式差异，需统一规范化后才能正确配对。**配对要求严格**：只有同一 API 才配对；规范化仅消除格式差异，不改变语义。
 
 **公式**：
 ```
-endpointKey = method + host + url
+endpointKey = normMethod + normHost + normUrl
 ```
 
-其中 `url` 为规范化后的 path + query，由 `normalizeEndpointUrl(path, query)` 生成。
+其中：
+- `normMethod`：method 转大写（HTTP 方法大小写不敏感）
+- `normHost`：host 转小写（DNS 大小写不敏感）
+- `normUrl`：path + query 规范化，由 `normalizeEndpointUrl(path, query)` 生成
 
 ### 1.2 URL 规范化算法
 
@@ -24,20 +27,22 @@ endpointKey = method + host + url
 输出: 规范化后的 url (String)
 
 1. 若 path 为 null，置为 ""
-2. 若 path 长度 > 1 且以 "/" 结尾，去掉尾部斜杠
+2. 将 path 中连续多个 "/" 合并为单个 "/"（消除 /api//users 等格式差异）
+3. 若 path 长度 > 1 且以 "/" 结尾，去掉尾部斜杠
    （保留 "/" 本身，不把根路径变成空）
-3. 若 query 为 null 或空，直接返回 path
-4. 否则：
+4. 若 query 为 null 或空，直接返回 path
+5. 否则：
    a. 将 query 按 "&" 分割为参数数组
    b. 对参数数组按字典序排序（消除参数顺序差异）
    c. 拼接为 path + "?" + 排序后的参数字符串
-5. 返回结果
+6. 返回结果
 ```
 
 **示例**：
 - `/api/users?id=1&name=a` → `/api/users?id=1&name=a`（已有序）
 - `/api/users?name=a&id=1` → `/api/users?id=1&name=a`（排序后）
 - `/api/users/` → `/api/users`
+- `/api//users` → `/api/users`
 - `/` → `/`（不变）
 
 ---
