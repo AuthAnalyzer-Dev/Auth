@@ -34,7 +34,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 import java.util.Set;
 
 public class UITestingPanel extends JPanel implements TabVisibilityAware {
@@ -70,6 +73,19 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     private static final int RETURN_PAGE_WAIT_MS = 1500;
     private static final int FIND_RETRY_MS = 500;
     private static final int FIND_RETRY_COUNT = 2;
+    /** 同页 Tab/状态切换后等待 DOM 更新（Angular 等 SPA） */
+    private static final int SAME_PAGE_DOM_WAIT_MS = 1000;
+
+    /** DOM 指纹采样：链接数量 + 前 N 个 href 的排序拼接，用于区分实质性结构变化（如 Tab 切换）与无状态变化操作（如点赞） */
+    private static final String DOM_FINGERPRINT_SCRIPT =
+            "var links = document.querySelectorAll('a[href]');" +
+            "var arr = [];" +
+            "for (var i = 0; i < Math.min(links.length, 60); i++) {" +
+            "  var h = links[i].getAttribute('href');" +
+            "  if (h) arr.push(h);" +
+            "}" +
+            "arr.sort();" +
+            "return links.length + '|' + arr.join(';').substring(0, 1500);";
 
     public UITestingPanel() {
         this(resolveStdout(), resolveStderr());
@@ -273,42 +289,87 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
                 String targetDomain = getDomainFromUrl(targetPage);
 
-                // 第一轮：收集可点击元素 key（越权检测：同域过滤 + 扩展 button/form）
-                LinkedHashMap<String, Void> clickableKeys = new LinkedHashMap<>();
-                collectClickableKeys(driver, targetDomain, clickableKeys);
-                log("[Crawl] 候选: " + clickableKeys.size());
+                // 按用户思路：以目标状态为基准，发现链接→点击→若改变状态则记录，点击完成后切换最优先状态→重复
+                Set<String> alreadyClicked = new HashSet<>();
+                Queue<List<String>> statesToExplore = new LinkedList<>();
+                Set<List<String>> exploredStates = new HashSet<>();
+                statesToExplore.add(new ArrayList<>());
+                int totalProcessed = 0;
+                final int maxTotalClicks = 500;
 
-                // 第二轮：每次点击后必须回到 target；仅点击登出时重新注入 Cookie，避免每次迭代都 applyCookies 过慢
-                for (String key : clickableKeys.keySet()) {
-                    boolean clickedLogout = false;
-                    try {
-                        log("[Crawl] 点击: " + key);
+                while (!statesToExplore.isEmpty() && totalProcessed < maxTotalClicks) {
+                    if (targetPage == null || targetPage.isEmpty()) break;
+                    List<String> targetStatePath = statesToExplore.poll();
+                    if (exploredStates.contains(targetStatePath)) continue;
+                    exploredStates.add(targetStatePath);
+
+                    goToTargetState(driver, targetPage, targetStatePath);
+                    waitForPageReady(driver);
+                    Thread.sleep(300);
+
+                    LinkedHashMap<String, Void> clickableKeys = new LinkedHashMap<>();
+                    collectClickableKeys(driver, targetDomain, clickableKeys);
+                    LinkedHashSet<String> stateSwitchersFound = new LinkedHashSet<>();
+
+                    for (String key : clickableKeys.keySet()) {
+                        if (alreadyClicked.contains(key)) continue;
+                        if (targetStatePath.contains(key)) continue;
+
+                        tryDismissBlockingOverlays(driver);
                         WebElement el = null;
                         for (int r = 0; r <= FIND_RETRY_COUNT && el == null; r++) {
                             if (r > 0) Thread.sleep(FIND_RETRY_MS);
                             el = findClickableByKey(driver, key);
                         }
-                        if (el == null) {
-                            log("[Crawl] 未找到元素: " + key);
-                            continue;
-                        }
-                        clickedLogout = isLogoutKey(key);
+                        if (el == null) continue;
+
                         try {
-                            ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", el);
-                            Thread.sleep(100);
-                        } catch (Throwable scrollEx) { /* 滚动失败不影响点击 */ }
-                        ensureClickInSameTab(driver, el);
-                        Thread.sleep(600);
-                    } catch (Throwable t) {
-                        log("[Crawl] 点击失败: " + key + " -> " + t.getMessage());
-                    } finally {
-                        if (targetPage != null && !targetPage.isEmpty()) {
+                            log("[Crawl] 点击: " + key);
+                            boolean clickedLogout = isLogoutKey(key);
+                            String urlBefore = driver.getCurrentUrl();
+                            String fpBefore = getPageContentFingerprint(driver);
                             try {
+                                ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", el);
+                                Thread.sleep(100);
+                            } catch (Throwable scrollEx) { /* ignore */ }
+                            ensureClickInSameTab(driver, el);
+                            Thread.sleep(600);
+                            alreadyClicked.add(key);
+                            totalProcessed++;
+
+                            String urlAfter = driver.getCurrentUrl();
+                            boolean urlChanged = urlAfter == null || urlBefore == null
+                                    ? (urlAfter != urlBefore)
+                                    : !normalizeUrlForCompare(urlAfter).equals(normalizeUrlForCompare(urlBefore));
+
+                            if (urlChanged) {
                                 if (clickedLogout) applyCookies(driver, targetPage);
-                                driver.get(targetPage);
-                                waitForPageReady(driver);
-                                Thread.sleep(RETURN_PAGE_WAIT_MS);
-                            } catch (Throwable ignore) {}
+                            } else {
+                                Thread.sleep(SAME_PAGE_DOM_WAIT_MS);
+                                String fpAfter = getPageContentFingerprint(driver);
+                                if (hasSubstantiveDomChange(fpBefore, fpAfter)) {
+                                    stateSwitchersFound.add(key);
+                                } else if (looksLikeTabOrStateSwitcher(el)) {
+                                    stateSwitchersFound.add(key);
+                                }
+                            }
+                            goToTargetState(driver, targetPage, targetStatePath);
+                            waitForPageReady(driver);
+                            Thread.sleep(RETURN_PAGE_WAIT_MS);
+                        } catch (Throwable t) {
+                            log("[Crawl] 点击失败: " + key + " -> " + (t.getMessage() != null ? t.getMessage() : ""));
+                            goToTargetState(driver, targetPage, targetStatePath);
+                            waitForPageReady(driver);
+                            Thread.sleep(RETURN_PAGE_WAIT_MS);
+                        }
+                    }
+
+                    for (String sw : stateSwitchersFound) {
+                        List<String> nextPath = new ArrayList<>(targetStatePath);
+                        nextPath.add(sw);
+                        if (!exploredStates.contains(nextPath)) {
+                            statesToExplore.add(nextPath);
+                            if (nextPath.size() == 1) log("[Crawl] 待探索状态: " + sw);
                         }
                     }
                 }
@@ -381,6 +442,66 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 log("[Crawl] JS 点击失败: " + jsEx.getMessage());
             }
         }
+    }
+
+    /** 进入目标状态：先加载目标页，再按 path 依次点击状态切换链接 */
+    private void goToTargetState(WebDriver driver, String targetPage, List<String> targetStatePath) {
+        try {
+            driver.get(targetPage);
+            waitForPageReady(driver);
+            Thread.sleep(300);
+            tryDismissBlockingOverlays(driver);
+            for (String key : targetStatePath) {
+                WebElement el = null;
+                for (int r = 0; r <= FIND_RETRY_COUNT && el == null; r++) {
+                    if (r > 0) Thread.sleep(FIND_RETRY_MS);
+                    el = findClickableByKey(driver, key);
+                }
+                if (el != null) {
+                    try {
+                        ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", el);
+                        Thread.sleep(100);
+                    } catch (Throwable ignore) {}
+                    ensureClickInSameTab(driver, el);
+                    Thread.sleep(SAME_PAGE_DOM_WAIT_MS);
+                }
+            }
+        } catch (Throwable ignore) {}
+    }
+
+    /** 尝试关闭可能阻塞的弹窗（浏览器版本提示、条款确认等），避免抓取卡住 */
+    private void tryDismissBlockingOverlays(WebDriver driver) {
+        try {
+            String[] closeTexts = {"确认", "取消", "关闭", "知道了", "暂不", "同意", "接受"};
+            for (String text : closeTexts) {
+                try {
+                    List<WebElement> btns = driver.findElements(By.xpath(
+                            "//button[contains(.,'" + text + "')] | //a[contains(.,'" + text + "')] | " +
+                            "//*[@role='button'][contains(.,'" + text + "')] | //input[@value='" + text + "']"));
+                    for (WebElement b : btns) {
+                        if (b.isDisplayed()) {
+                            try {
+                                b.click();
+                                Thread.sleep(300);
+                                return;
+                            } catch (Throwable ignore) {}
+                        }
+                    }
+                } catch (Throwable ignore) {}
+            }
+            List<WebElement> modals = driver.findElements(By.cssSelector(".modal, [role='dialog'], .el-dialog"));
+            for (WebElement m : modals) {
+                if (!m.isDisplayed()) continue;
+                try {
+                    WebElement close = m.findElement(By.cssSelector(".close, .el-dialog__close, [aria-label='Close']"));
+                    if (close != null && close.isDisplayed()) {
+                        close.click();
+                        Thread.sleep(300);
+                        return;
+                    }
+                } catch (Throwable ignore) {}
+            }
+        } catch (Throwable ignore) {}
     }
 
     /** 等待页面就绪（document.readyState），缓解 SPA 异步渲染导致的「未找到」 */
@@ -473,8 +594,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 if (!isHrefInScopeForAuth(href, targetDomain)) continue;
                 boolean textEmpty = (text == null || text.trim().isEmpty());
                 boolean hrefEmpty = (href == null || href.trim().isEmpty());
-                if (textEmpty && hrefEmpty) continue;
-                String keyPart = pickAnchorKey(text, href, textEmpty, hrefEmpty);
+                String keyPart = pickAnchorKey(a, text, href, textEmpty, hrefEmpty);
                 if (keyPart == null) continue;
                 out.putIfAbsent("a|" + normalizeKey(keyPart), null);
             } catch (Throwable ignore) {}
@@ -489,15 +609,53 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 out.putIfAbsent("btn|" + normalizeKey(label), null);
             } catch (Throwable ignore) {}
         }
+        // role="button" 的 div/span 等（如 Angular 的 <a role="button"> 已由上面 //a 收集）
+        List<WebElement> roleButtons = driver.findElements(By.xpath("//*[@role='button' and not(self::a) and not(self::button)]"));
+        for (WebElement rb : roleButtons) {
+            try {
+                String label = rb.getText();
+                if (label == null || label.trim().isEmpty()) label = rb.getAttribute("aria-label");
+                if (label == null || label.trim().isEmpty()) label = "[无文本]";
+                out.putIfAbsent("btn|" + normalizeKey(label), null);
+            } catch (Throwable ignore) {}
+        }
     }
 
-    /** 图标链接（text 短）优先用 href 作为 key，避免环境差异导致匹配失败 */
-    private String pickAnchorKey(String text, String href, boolean textEmpty, boolean hrefEmpty) {
-        if (textEmpty) return hrefEmpty ? null : href.trim();
-        if (hrefEmpty) return text.trim();
-        String t = text.trim();
-        if (t.length() <= 2) return href.trim();
-        return t;
+    /** 图标链接（text 短）优先用 href；text/href 皆空时回退到 aria-label、title、内部 img alt */
+    private String pickAnchorKey(WebElement a, String text, String href, boolean textEmpty, boolean hrefEmpty) {
+        if (!textEmpty) {
+            if (hrefEmpty) return text.trim();
+            String t = text.trim();
+            if (t.length() <= 2) return href.trim();
+            return t;
+        }
+        if (!hrefEmpty) return href.trim();
+        String aria = getAttributeTrimmed(a, "aria-label");
+        if (aria != null) return aria;
+        String title = getAttributeTrimmed(a, "title");
+        if (title != null) return title;
+        String imgAlt = getFirstImgAlt(a);
+        if (imgAlt != null) return imgAlt;
+        return null;
+    }
+
+    private static String getAttributeTrimmed(WebElement el, String attr) {
+        try {
+            String v = el.getAttribute(attr);
+            if (v != null && !v.trim().isEmpty()) return v.trim();
+        } catch (Throwable ignore) {}
+        return null;
+    }
+
+    private static String getFirstImgAlt(WebElement anchor) {
+        try {
+            List<WebElement> imgs = anchor.findElements(By.tagName("img"));
+            for (WebElement img : imgs) {
+                String alt = img.getAttribute("alt");
+                if (alt != null && !alt.trim().isEmpty()) return alt.trim();
+            }
+        } catch (Throwable ignore) {}
+        return null;
     }
 
     /** 规范化 key 用于匹配：trim + 合并连续空白 */
@@ -506,7 +664,58 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         return s.trim().replaceAll("\\s+", " ");
     }
 
-    /** href 是否在越权检测范围内：同域、非 mailto/tel 等 */
+    /** 轻量级 DOM 指纹：链接数量 + 前 N 个 href 排序拼接，用于区分 Tab 切换与点赞等无结构变化操作 */
+    private String getPageContentFingerprint(WebDriver driver) {
+        try {
+            Object r = ((JavascriptExecutor) driver).executeScript(DOM_FINGERPRINT_SCRIPT);
+            return r != null ? r.toString() : "";
+        } catch (Throwable t) {
+            return "";
+        }
+    }
+
+    /** 是否像 Tab/状态切换按钮（role=button、ng-click、btnCur 等），用于 DOM 指纹未变化时的兜底 */
+    private boolean looksLikeTabOrStateSwitcher(WebElement el) {
+        try {
+            String role = el.getAttribute("role");
+            if ("button".equalsIgnoreCase(role)) return true;
+            String cls = el.getAttribute("class");
+            if (cls != null && (cls.contains("btnCur") || cls.contains("tab") || cls.contains("nav-tab")))
+                return true;
+            String ngClick = el.getAttribute("ng-click");
+            if (ngClick != null && !ngClick.trim().isEmpty()) return true;
+        } catch (Throwable ignore) {}
+        return false;
+    }
+
+    /** 是否发生实质性 DOM 结构变化（链接数量或链接集合变化），排除点赞等微调 */
+    private boolean hasSubstantiveDomChange(String fpBefore, String fpAfter) {
+        if (fpBefore == null || fpAfter == null) return false;
+        if (fpBefore.equals(fpAfter)) return false;
+        try {
+            int sepBefore = fpBefore.indexOf('|');
+            int sepAfter = fpAfter.indexOf('|');
+            if (sepBefore < 0 || sepAfter < 0) return true;
+            int countBefore = Integer.parseInt(fpBefore.substring(0, sepBefore));
+            int countAfter = Integer.parseInt(fpAfter.substring(0, sepAfter));
+            if (countBefore != countAfter) return true;
+            String linksBefore = sepBefore + 1 < fpBefore.length() ? fpBefore.substring(sepBefore + 1) : "";
+            String linksAfter = sepAfter + 1 < fpAfter.length() ? fpAfter.substring(sepAfter + 1) : "";
+            return !linksBefore.equals(linksAfter);
+        } catch (NumberFormatException e) {
+            return true;
+        }
+    }
+
+    /** 用于比较的 URL 规范化（忽略末尾斜杠等细微差异） */
+    private static String normalizeUrlForCompare(String url) {
+        if (url == null) return "";
+        String s = url.trim();
+        if (s.endsWith("/") && s.length() > 1) s = s.substring(0, s.length() - 1);
+        return s;
+    }
+
+    /** href 是否在越权检测范围内：同根域（允许 www/api 等子域）、非 mailto/tel 等 */
     private boolean isHrefInScopeForAuth(String href, String targetDomain) {
         if (href == null || href.trim().isEmpty()) return true;
         String h = href.trim().toLowerCase();
@@ -516,9 +725,36 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         if (!h.startsWith("http://") && !h.startsWith("https://")) return true;
         try {
             if (targetDomain == null) return true;
-            String domain = getDomainFromUrl(href);
-            return domain != null && domain.equalsIgnoreCase(targetDomain);
+            String hrefDomain = getDomainFromUrl(href);
+            if (hrefDomain == null) return true;
+            return isSameRootDomain(hrefDomain, targetDomain);
         } catch (Throwable ignore) { return false; }
+    }
+
+    /** 判断两域名是否同根域（如 www.xxx.com 与 api.xxx.com） */
+    private static boolean isSameRootDomain(String domainA, String domainB) {
+        if (domainA == null || domainB == null) return false;
+        String rootA = getRootDomain(domainA);
+        String rootB = getRootDomain(domainB);
+        return rootA != null && rootB != null && rootA.equalsIgnoreCase(rootB);
+    }
+
+    /** 提取根域名（如 www.example.com -> example.com，api.sub.example.com -> example.com） */
+    private static String getRootDomain(String host) {
+        if (host == null || host.isEmpty()) return host;
+        String h = host.trim().toLowerCase();
+        String[] parts = h.split("\\.");
+        if (parts.length <= 2) return h;
+        if (parts.length >= 3) {
+            String lastTwo = parts[parts.length - 2] + "." + parts[parts.length - 1];
+            if ("co.uk".equals(lastTwo) || "com.cn".equals(lastTwo) || "net.cn".equals(lastTwo)
+                    || "org.cn".equals(lastTwo) || "gov.cn".equals(lastTwo)) {
+                if (parts.length >= 4) {
+                    return parts[parts.length - 4] + "." + parts[parts.length - 3] + "." + lastTwo;
+                }
+            }
+        }
+        return parts[parts.length - 2] + "." + parts[parts.length - 1];
     }
 
     /** 根据 key 查找可点击元素，key 格式为 "a|..." 或 "btn|..." */
@@ -545,8 +781,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 String href = a.getAttribute("href");
                 boolean textEmpty = (text == null || text.trim().isEmpty());
                 boolean hrefEmpty = (href == null || href.trim().isEmpty());
-                if (textEmpty && hrefEmpty) continue;
-                String keyPart = pickAnchorKey(text, href, textEmpty, hrefEmpty);
+                String keyPart = pickAnchorKey(a, text, href, textEmpty, hrefEmpty);
                 if (keyPart != null && keyNorm.equals(normalizeKey(keyPart))) return a;
             } catch (Throwable ignore) {}
         }
@@ -563,6 +798,15 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 if (label == null || label.trim().isEmpty()) label = b.getAttribute("aria-label");
                 if (label == null || label.trim().isEmpty()) label = "[无文本]";
                 if (keyNorm.equals(normalizeKey(label))) return b;
+            } catch (Throwable ignore) {}
+        }
+        List<WebElement> roleButtons = driver.findElements(By.xpath("//*[@role='button' and not(self::a) and not(self::button)]"));
+        for (WebElement rb : roleButtons) {
+            try {
+                String label = rb.getText();
+                if (label == null || label.trim().isEmpty()) label = rb.getAttribute("aria-label");
+                if (label == null || label.trim().isEmpty()) label = "[无文本]";
+                if (keyNorm.equals(normalizeKey(label))) return rb;
             } catch (Throwable ignore) {}
         }
         return null;
