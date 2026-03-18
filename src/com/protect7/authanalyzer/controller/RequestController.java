@@ -10,6 +10,7 @@ package com.protect7.authanalyzer.controller;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
@@ -17,6 +18,7 @@ import com.protect7.authanalyzer.entities.Token;
 import com.protect7.authanalyzer.entities.TokenPriority;
 import com.protect7.authanalyzer.util.BypassConstants;
 import com.protect7.authanalyzer.util.CurrentConfig;
+import com.protect7.authanalyzer.util.JsonStructuralDiffHelper;
 import com.protect7.authanalyzer.util.SymmetricTrafficStore;
 import com.protect7.authanalyzer.util.ExtractionHelper;
 import com.protect7.authanalyzer.util.GenericHelper;
@@ -173,10 +175,10 @@ public class RequestController {
 
 	/*
 	 * Bypass if: - Both Responses have same Response Body and Status Code
-	 * 
 	 * Potential Bypass if: - Both Responses have same Response Code - Both
-	 * Responses have +-5% of response body length
+	 * Responses have +-5% of response body length (non-JSON) or JSON Keys 相似 (JSON)
 	 *
+	 * JSON 结构化差分：解决漏报（冗余包裹导致长度差>5%）和误报（timestamp 变化破坏 TRIVIAL）。
 	 */
 	public BypassConstants analyzeResponse(byte[] originalResponse, byte[] sessionResponse,
 			IResponseInfo originalResponseInfo, IResponseInfo sessionResponseInfo) {
@@ -184,14 +186,74 @@ public class RequestController {
 				originalResponse.length);
 		byte[] sessionResponseBody = Arrays.copyOfRange(sessionResponse, sessionResponseInfo.getBodyOffset(),
 				sessionResponse.length);
-		if (Arrays.equals(originalResponseBody, sessionResponseBody)
-				&& (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !CurrentConfig.getCurrentConfig().isRespectResponseCodeForSameStatus())) {
+
+		boolean isJson = JsonStructuralDiffHelper.isJsonMimeType(
+				originalResponseInfo.getStatedMimeType(), originalResponseInfo.getInferredMimeType());
+
+		if (isJson) {
+			com.google.gson.JsonElement jsonOrig = JsonStructuralDiffHelper.parseJson(
+					originalResponse, originalResponseInfo.getBodyOffset(), originalResponse.length);
+			com.google.gson.JsonElement jsonSess = JsonStructuralDiffHelper.parseJson(
+					sessionResponse, sessionResponseInfo.getBodyOffset(), sessionResponse.length);
+
+			if (jsonOrig != null && jsonSess != null) {
+				BypassConstants jsonResult = analyzeResponseJson(jsonOrig, jsonSess, originalResponseInfo, sessionResponseInfo);
+				if (jsonResult != null) return jsonResult;
+			}
+			// JSON 解析失败，fallback 到原有逻辑
+		}
+
+		// 非 JSON 或 JSON 解析失败：保留原有字节/长度逻辑
+		return analyzeResponseLegacy(originalResponseBody, sessionResponseBody, originalResponseInfo, sessionResponseInfo);
+	}
+
+	/**
+	 * JSON 结构化差分：SAME（含忽略 volatile）、SIMILAR（Keys 相似）、DIFFERENT（结构颠覆）。
+	 */
+	private BypassConstants analyzeResponseJson(com.google.gson.JsonElement jsonOrig, com.google.gson.JsonElement jsonSess,
+			IResponseInfo originalResponseInfo, IResponseInfo sessionResponseInfo) {
+		CurrentConfig cfg = CurrentConfig.getCurrentConfig();
+
+		// 结构颠覆：一方业务数据，一方错误响应 → 强制 DIFFERENT
+		if (JsonStructuralDiffHelper.hasStructuralShift(jsonOrig, jsonSess)) {
+			return BypassConstants.DIFFERENT;
+		}
+
+		// SAME：深度比较，忽略 timestamp/nonce 等 volatile keys
+		boolean statusOkForSame = originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode()
+				|| !cfg.isRespectResponseCodeForSameStatus();
+		if (statusOkForSame && JsonStructuralDiffHelper.deepEqualsIgnoringVolatile(jsonOrig, jsonSess)) {
 			return BypassConstants.SAME;
 		}
-		if (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !CurrentConfig.getCurrentConfig().isRespectResponseCodeForSimilarStatus()) {
-			int range = originalResponseBody.length / (100/CurrentConfig.getCurrentConfig().getDerivationForSimilarStatus());
+
+		// SIMILAR：Keys 相似度极高（核心业务字段一致），Values 有差异
+		boolean statusOkForSimilar = originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode()
+				|| !cfg.isRespectResponseCodeForSimilarStatus();
+		if (statusOkForSimilar) {
+			Set<String> keysOrig = JsonStructuralDiffHelper.collectKeys(jsonOrig);
+			Set<String> keysSess = JsonStructuralDiffHelper.collectKeys(jsonSess);
+			double sim = JsonStructuralDiffHelper.keysSimilarity(keysOrig, keysSess);
+			if (sim >= 0.8) {
+				return BypassConstants.SIMILAR;
+			}
+		}
+
+		return BypassConstants.DIFFERENT;
+	}
+
+	/**
+	 * 原有逻辑：字节相等 + ±5% 长度。
+	 */
+	private BypassConstants analyzeResponseLegacy(byte[] originalResponseBody, byte[] sessionResponseBody,
+			IResponseInfo originalResponseInfo, IResponseInfo sessionResponseInfo) {
+		CurrentConfig cfg = CurrentConfig.getCurrentConfig();
+		if (Arrays.equals(originalResponseBody, sessionResponseBody)
+				&& (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !cfg.isRespectResponseCodeForSameStatus())) {
+			return BypassConstants.SAME;
+		}
+		if (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !cfg.isRespectResponseCodeForSimilarStatus()) {
+			int range = originalResponseBody.length / (100 / cfg.getDerivationForSimilarStatus());
 			int difference = originalResponseBody.length - sessionResponseBody.length;
-			// Check if difference is in range
 			if (difference <= range && difference >= -range) {
 				return BypassConstants.SIMILAR;
 			}
