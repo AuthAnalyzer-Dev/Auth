@@ -15,10 +15,14 @@ public class AuthAnalyzerMenu extends JMenu {
 	public AuthAnalyzerMenu(String name) {
 		super(name);
 		JMenuItem exportSetupMenuItem = new JMenuItem("Export Setup");
-		exportSetupMenuItem.addActionListener(e -> BurpExtender.mainPanel.getConfigurationPanel().saveSetup());
+		exportSetupMenuItem.addActionListener(e -> {
+			if (BurpExtender.hostPanel != null) BurpExtender.hostPanel.getConfigurationPanel().saveSetup();
+		});
 		add(exportSetupMenuItem);
 		JMenuItem importSetupMenuItem = new JMenuItem("Import Setup");
-		importSetupMenuItem.addActionListener(e -> BurpExtender.mainPanel.getConfigurationPanel().loadSetup());
+		importSetupMenuItem.addActionListener(e -> {
+			if (BurpExtender.hostPanel != null) BurpExtender.hostPanel.getConfigurationPanel().loadSetup();
+		});
 		add(importSetupMenuItem);
 		addSeparator();
 		JMenuItem settingsMenuItem = new JMenuItem("Settings");

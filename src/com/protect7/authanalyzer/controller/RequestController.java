@@ -10,6 +10,7 @@ package com.protect7.authanalyzer.controller;
 import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
 import com.protect7.authanalyzer.entities.Session;
@@ -17,6 +18,8 @@ import com.protect7.authanalyzer.entities.Token;
 import com.protect7.authanalyzer.entities.TokenPriority;
 import com.protect7.authanalyzer.util.BypassConstants;
 import com.protect7.authanalyzer.util.CurrentConfig;
+import com.protect7.authanalyzer.util.JsonStructuralDiffHelper;
+import com.protect7.authanalyzer.util.SymmetricTrafficStore;
 import com.protect7.authanalyzer.util.ExtractionHelper;
 import com.protect7.authanalyzer.util.GenericHelper;
 import com.protect7.authanalyzer.util.RequestModifHelper;
@@ -125,13 +128,8 @@ public class RequestController {
 					}
 				}
 			}
-			String url = "";
-			if(originalRequestInfo.getUrl().getQuery() == null) {
-				url = originalRequestInfo.getUrl().getPath();
-			}
-			else {
-				url = originalRequestInfo.getUrl().getPath() + "?" + originalRequestInfo.getUrl().getQuery();
-			}
+			String url = normalizeEndpointUrl(originalRequestInfo.getUrl().getPath(),
+					originalRequestInfo.getUrl().getQuery());
 			String infoText = null;
 			if(originalRequestResponse.getResponse() == null) {
 				infoText = "Request Dropped. No Response to show.";
@@ -144,7 +142,11 @@ public class RequestController {
 			}
 			OriginalRequestResponse requestResponse = new OriginalRequestResponse(mapId, originalRequestResponse, 
 					originalRequestInfo.getMethod(), url, infoText, originalStatusCode, originalResponseContentLength);
-			CurrentConfig.getCurrentConfig().getTableModel().addNewRequestResponse(requestResponse);		
+			com.protect7.authanalyzer.gui.util.RequestTableModel tm = CurrentConfig.getCurrentConfig().getTableModel();
+			if (tm != null) {
+				tm.addNewRequestResponse(requestResponse, CurrentConfig.getCurrentConfig().isSymmetricRun2Mode());
+			}
+			writeToSymmetricStore(requestResponse, mapId);
 			GenericHelper.animateBurpExtensionTab();
 		}
 	}
@@ -173,10 +175,10 @@ public class RequestController {
 
 	/*
 	 * Bypass if: - Both Responses have same Response Body and Status Code
-	 * 
 	 * Potential Bypass if: - Both Responses have same Response Code - Both
-	 * Responses have +-5% of response body length
+	 * Responses have +-5% of response body length (non-JSON) or JSON Keys 相似 (JSON)
 	 *
+	 * JSON 结构化差分：解决漏报（冗余包裹导致长度差>5%）和误报（timestamp 变化破坏 TRIVIAL）。
 	 */
 	public BypassConstants analyzeResponse(byte[] originalResponse, byte[] sessionResponse,
 			IResponseInfo originalResponseInfo, IResponseInfo sessionResponseInfo) {
@@ -184,18 +186,122 @@ public class RequestController {
 				originalResponse.length);
 		byte[] sessionResponseBody = Arrays.copyOfRange(sessionResponse, sessionResponseInfo.getBodyOffset(),
 				sessionResponse.length);
-		if (Arrays.equals(originalResponseBody, sessionResponseBody)
-				&& (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !CurrentConfig.getCurrentConfig().isRespectResponseCodeForSameStatus())) {
+
+		boolean isJson = JsonStructuralDiffHelper.isJsonMimeType(
+				originalResponseInfo.getStatedMimeType(), originalResponseInfo.getInferredMimeType());
+
+		if (isJson) {
+			com.google.gson.JsonElement jsonOrig = JsonStructuralDiffHelper.parseJson(
+					originalResponse, originalResponseInfo.getBodyOffset(), originalResponse.length);
+			com.google.gson.JsonElement jsonSess = JsonStructuralDiffHelper.parseJson(
+					sessionResponse, sessionResponseInfo.getBodyOffset(), sessionResponse.length);
+
+			if (jsonOrig != null && jsonSess != null) {
+				BypassConstants jsonResult = analyzeResponseJson(jsonOrig, jsonSess, originalResponseInfo, sessionResponseInfo);
+				if (jsonResult != null) return jsonResult;
+			}
+			// JSON 解析失败，fallback 到原有逻辑
+		}
+
+		// 非 JSON 或 JSON 解析失败：保留原有字节/长度逻辑
+		return analyzeResponseLegacy(originalResponseBody, sessionResponseBody, originalResponseInfo, sessionResponseInfo);
+	}
+
+	/**
+	 * JSON 结构化差分：SAME（含忽略 volatile）、SIMILAR（Keys 相似）、DIFFERENT（结构颠覆）。
+	 */
+	private BypassConstants analyzeResponseJson(com.google.gson.JsonElement jsonOrig, com.google.gson.JsonElement jsonSess,
+			IResponseInfo originalResponseInfo, IResponseInfo sessionResponseInfo) {
+		CurrentConfig cfg = CurrentConfig.getCurrentConfig();
+
+		// 结构颠覆：一方业务数据，一方错误响应 → 强制 DIFFERENT
+		if (JsonStructuralDiffHelper.hasStructuralShift(jsonOrig, jsonSess)) {
+			return BypassConstants.DIFFERENT;
+		}
+
+		// SAME：深度比较，忽略 timestamp/nonce 等 volatile keys
+		boolean statusOkForSame = originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode()
+				|| !cfg.isRespectResponseCodeForSameStatus();
+		if (statusOkForSame && JsonStructuralDiffHelper.deepEqualsIgnoringVolatile(jsonOrig, jsonSess)) {
 			return BypassConstants.SAME;
 		}
-		if (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !CurrentConfig.getCurrentConfig().isRespectResponseCodeForSimilarStatus()) {
-			int range = originalResponseBody.length / (100/CurrentConfig.getCurrentConfig().getDerivationForSimilarStatus());
+
+		// SIMILAR：Keys 相似度极高（核心业务字段一致），Values 有差异
+		boolean statusOkForSimilar = originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode()
+				|| !cfg.isRespectResponseCodeForSimilarStatus();
+		if (statusOkForSimilar) {
+			Set<String> keysOrig = JsonStructuralDiffHelper.collectKeys(jsonOrig);
+			Set<String> keysSess = JsonStructuralDiffHelper.collectKeys(jsonSess);
+			double sim = JsonStructuralDiffHelper.keysSimilarity(keysOrig, keysSess);
+			if (sim >= 0.8) {
+				return BypassConstants.SIMILAR;
+			}
+		}
+
+		return BypassConstants.DIFFERENT;
+	}
+
+	/**
+	 * 原有逻辑：字节相等 + ±5% 长度。
+	 */
+	private BypassConstants analyzeResponseLegacy(byte[] originalResponseBody, byte[] sessionResponseBody,
+			IResponseInfo originalResponseInfo, IResponseInfo sessionResponseInfo) {
+		CurrentConfig cfg = CurrentConfig.getCurrentConfig();
+		if (Arrays.equals(originalResponseBody, sessionResponseBody)
+				&& (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !cfg.isRespectResponseCodeForSameStatus())) {
+			return BypassConstants.SAME;
+		}
+		if (originalResponseInfo.getStatusCode() == sessionResponseInfo.getStatusCode() || !cfg.isRespectResponseCodeForSimilarStatus()) {
+			int range = originalResponseBody.length / (100 / cfg.getDerivationForSimilarStatus());
 			int difference = originalResponseBody.length - sessionResponseBody.length;
-			// Check if difference is in range
 			if (difference <= range && difference >= -range) {
 				return BypassConstants.SIMILAR;
 			}
 		}
 		return BypassConstants.DIFFERENT;
+	}
+
+	/**
+	 * 规范化 URL 用于 endpoint 匹配，避免 Run1/Run2 因插件修饰、参数顺序、尾部斜杠等差异导致相同 API 无法配对。
+	 */
+	private static String normalizeEndpointUrl(String path, String query) {
+		if (path == null) path = "";
+		path = path.replaceAll("/+", "/");
+		if (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
+		if (query == null || query.isEmpty()) return path;
+		String[] params = query.split("&");
+		java.util.Arrays.sort(params);
+		StringBuilder sb = new StringBuilder(path).append('?');
+		for (int i = 0; i < params.length; i++) {
+			if (i > 0) sb.append('&');
+			sb.append(params[i]);
+		}
+		return sb.toString();
+	}
+
+	private void writeToSymmetricStore(OriginalRequestResponse orr, int mapId) {
+		CurrentConfig cfg = CurrentConfig.getCurrentConfig();
+		if (!cfg.isSymmetricCaptureEnabled()) return;
+		SymmetricTrafficStore store = cfg.getSymmetricTrafficStore();
+		if (store == null) return;
+
+		String endpointKey = orr.getEndpoint();
+		byte[] response = orr.getRequestResponse() != null ? orr.getRequestResponse().getResponse() : null;
+		if (response == null) return;
+
+		java.util.List<Session> sessions = cfg.getSessions();
+		BypassConstants replayStatus = null;
+		if (sessions != null && !sessions.isEmpty()) {
+			AnalyzerRequestResponse arr = sessions.get(0).getRequestResponseMap().get(mapId);
+			if (arr != null) replayStatus = arr.getStatus();
+		}
+
+		if (cfg.isSymmetricRun2Mode()) {
+			store.putResponseB(endpointKey, response);
+			if (replayStatus != null) store.putReplayStatusRun2(endpointKey, replayStatus);
+		} else {
+			store.putResponseA(endpointKey, response);
+			if (replayStatus != null) store.putReplayStatusRun1(endpointKey, replayStatus);
+		}
 	}
 }

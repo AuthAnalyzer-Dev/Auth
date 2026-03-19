@@ -1,63 +1,59 @@
-package com.protect7.authanalyzer.gui.UITesting;
+package com.protect7.authanalyzer.gui.Result;
 
 import java.awt.BorderLayout;
 import java.awt.Font;
 import java.util.Arrays;
-
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTabbedPane;
 import javax.swing.JTextArea;
-
 import com.protect7.authanalyzer.entities.AnalyzerRequestResponse;
 import com.protect7.authanalyzer.entities.OriginalRequestResponse;
-
 import burp.BurpExtender;
 import burp.IHttpRequestResponse;
 import burp.IResponseInfo;
 
-class DetailPanel extends JPanel {
+/**
+ * Result 页面的详情面板：展示 Original 与选中 Session 的请求/响应。
+ */
+class ResultDetailPanel extends JPanel {
 
-    private final JTabbedPane rootTabs   = new JTabbedPane();       // Original | Session | Log
-    private final JTabbedPane originalTP = new JTabbedPane();       // Request | Response
-    private final JTabbedPane sessionTP  = new JTabbedPane();       // Request | Response
-
-    private final JTextArea originalReq  = monoArea();
+    private static final long serialVersionUID = 1L;
+    private final JTabbedPane rootTabs = new JTabbedPane();
+    private final JTabbedPane originalTP = new JTabbedPane();
+    private final JTabbedPane sessionTP = new JTabbedPane();
+    private final JTextArea originalReq = monoArea();
     private final JTextArea originalResp = monoArea();
-    private final JTextArea sessionReq   = monoArea();
-    private final JTextArea sessionResp  = monoArea();
-    private final JTextArea logArea      = monoArea();
+    private final JTextArea sessionReq = monoArea();
+    private final JTextArea sessionResp = monoArea();
 
-    DetailPanel() {
+    ResultDetailPanel() {
         setLayout(new BorderLayout());
-
         originalTP.addTab("Request", new JScrollPane(originalReq));
         originalTP.addTab("Response", new JScrollPane(originalResp));
         sessionTP.addTab("Request", new JScrollPane(sessionReq));
         sessionTP.addTab("Response", new JScrollPane(sessionResp));
-
         rootTabs.addTab("Original", originalTP);
         rootTabs.addTab("Session", sessionTP);
-        rootTabs.addTab("Log", new JScrollPane(logArea));
-
         add(rootTabs, BorderLayout.CENTER);
     }
 
-    void setSessionTabTitle(String name) {
-        int idx = rootTabs.indexOfComponent(sessionTP);
-        if (idx >= 0) rootTabs.setTitleAt(idx, name);
+    void showEmpty() {
+        originalReq.setText("[请选择表格中的一行]");
+        originalResp.setText("");
+        sessionReq.setText("");
+        sessionResp.setText("");
     }
 
     void showOriginal(OriginalRequestResponse orr) {
         try {
             if (orr == null || orr.getRequestResponse() == null) {
                 originalReq.setText("[no original request]");
-                originalResp.setText("[no original response]");
+                originalResp.setText("");
                 return;
             }
             IHttpRequestResponse rr = orr.getRequestResponse();
-
-            String req = rr.getRequest()!=null
+            String req = rr.getRequest() != null
                     ? BurpExtender.callbacks.getHelpers().bytesToString(rr.getRequest())
                     : "[no request]";
             originalReq.setText(req);
@@ -75,7 +71,7 @@ class DetailPanel extends JPanel {
             originalResp.setText(respTxt);
             originalResp.setCaretPosition(0);
         } catch (Throwable t) {
-            originalReq.setText("[failed to render original: " + t.getMessage() + "]");
+            originalReq.setText("[failed: " + t.getMessage() + "]");
             originalResp.setText("");
         }
     }
@@ -88,8 +84,7 @@ class DetailPanel extends JPanel {
                 return;
             }
             IHttpRequestResponse rr = arr.getRequestResponse();
-
-            String req = rr.getRequest()!=null
+            String req = rr.getRequest() != null
                     ? BurpExtender.callbacks.getHelpers().bytesToString(rr.getRequest())
                     : "[no request]";
             sessionReq.setText(req);
@@ -107,18 +102,9 @@ class DetailPanel extends JPanel {
             sessionResp.setText(respTxt);
             sessionResp.setCaretPosition(0);
         } catch (Throwable t) {
-            sessionReq.setText("[failed to render session replay: " + t.getMessage() + "]");
+            sessionReq.setText("[failed: " + t.getMessage() + "]");
             sessionResp.setText("");
         }
-    }
-
-    void appendLog(String msg) {
-        logArea.append(msg + "\n");
-        logArea.setCaretPosition(logArea.getDocument().getLength());
-    }
-
-    void clearLog() {
-        logArea.setText("");
     }
 
     private static JTextArea monoArea() {

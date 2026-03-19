@@ -1,69 +1,116 @@
 package com.protect7.authanalyzer.gui.UITesting;
 
-import javax.swing.*;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.GridBagConstraints;
+import java.awt.GridBagLayout;
+import java.awt.Insets;
 import java.awt.event.ActionListener;
 import java.util.List;
 
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
+import javax.swing.JLabel;
+import javax.swing.JPanel;
+import javax.swing.JTextField;
+
+import com.protect7.authanalyzer.gui.util.PlaceholderTextArea;
+
 class ControlsPanel extends JPanel {
 
-    private final JTextField baseUrlField = new JTextField("https://v.ruc.edu.cn/", 28);
-    private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 28);
-    private final JTextField tiupUidField = new JTextField("", 28);
-    private final JTextField sessionField = new JTextField("", 28);
+    private static final int TEXT_AREA_COLUMNS = 48;
 
-    private final JButton startAutomationBtn = new JButton("启动自动化任务");
-    private final JButton startDriverBtn = new JButton("启动代理 Driver");
+    private final JTextField targetUrlField = new JTextField("https://v.ruc.edu.cn/servcenter/front/form/detail/10980/1441/type/3", 22);
+    private final PlaceholderTextArea headersToReplaceText = new PlaceholderTextArea(3, TEXT_AREA_COLUMNS);
+
     private final JButton crawlClickBtn = new JButton("抓取并点击页面链接");
     private final JButton clearLogBtn = new JButton("清空日志");
+    private final JButton clearTableBtn = new JButton("清空表格");
+
+    private final JCheckBox discoverFromJsCheck = new JCheckBox("从 JS 提取", true);
+    private final JCheckBox discoverFromSwaggerCheck = new JCheckBox("从 Swagger 探测", true);
+    private final JButton discoverBtn = new JButton("发现隐藏 API");
 
     private final JComboBox<String> sessionChooser = new JComboBox<>();
 
+    private final JPanel originalSectionPanel;
+    private final JPanel targetUrlSectionPanel;
+    private final JPanel apiDiscoveryPanel;
+    private final JPanel buttonsPanel;
+
     ControlsPanel() {
-        setLayout(new BorderLayout());
-
-        JPanel form = new JPanel(new GridBagLayout());
-        GridBagConstraints gbc = new GridBagConstraints();
-        gbc.fill = GridBagConstraints.HORIZONTAL;
-        gbc.insets = new Insets(5,5,5,5);
-
-        int y = 0;
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("Base URL:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(baseUrlField, gbc);
-
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("Target URL:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(targetUrlField, gbc);
-
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("tiup_uid Cookie:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(tiupUidField, gbc);
-
-        gbc.gridx=0; gbc.gridy=y; gbc.weightx=0; form.add(new JLabel("session Cookie:"), gbc);
-        gbc.gridx=1; gbc.gridy=y++; gbc.weightx=1; form.add(sessionField, gbc);
-
-        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
-        crawlClickBtn.setEnabled(false);
-        sessionChooser.setPrototypeDisplayValue("Session (user1)");
-
-        buttons.add(startAutomationBtn);
-        buttons.add(startDriverBtn);
-        buttons.add(crawlClickBtn);
-        buttons.add(new JLabel("Session:"));
-        buttons.add(sessionChooser);
-        buttons.add(clearLogBtn);
-
-        add(form, BorderLayout.CENTER);
-        add(buttons, BorderLayout.SOUTH);
-        setPreferredSize(new Dimension(520, 0));
+        this(false);
     }
 
-    /* --- 对外API（主面板来读/写/监听） --- */
-    String getBaseUrl()   { return baseUrlField.getText(); }
-    String getTargetUrl() { return targetUrlField.getText(); }
-    String getTiupUid()   { return tiupUidField.getText(); }
-    String getSessionStr(){ return sessionField.getText(); }
+    ControlsPanel(boolean mergedMode) {
+        setLayout(new BorderLayout());
 
-    void setDriverButtonText(String txt) { startDriverBtn.setText(txt); }
-    void setCrawlEnabled(boolean b) { crawlClickBtn.setEnabled(b); }
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.insets = new Insets(5, 5, 5, 5);
+
+        originalSectionPanel = new JPanel(new GridBagLayout());
+        JLabel headerToReplaceLabel = new JLabel("Header(s) to Replace");
+        headersToReplaceText.setAlignmentX(Component.LEFT_ALIGNMENT);
+        headersToReplaceText.setPlaceholder("Cookie: access_token=xxx\nCookie: session=xxx\nCookie: name=value");
+        headersToReplaceText.setToolTipText(
+                "<html>支持任意 Cookie，每行一个 Header 或分号分隔。如：<br>Cookie: access_token=xxx<br>Cookie: session=xxx; tiup_uid=yyy</html>");
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2; gbc.weightx = 1; gbc.weighty = 0;
+        originalSectionPanel.add(headerToReplaceLabel, gbc);
+        gbc.gridy = 1; gbc.weighty = 1;
+        originalSectionPanel.add(headersToReplaceText, gbc);
+
+        targetUrlSectionPanel = new JPanel(new GridBagLayout());
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 1; gbc.weightx = 1; gbc.weighty = 0;
+        targetUrlSectionPanel.add(new JLabel("Target URL:"), gbc);
+        gbc.gridy = 1; gbc.weighty = 1;
+        targetUrlSectionPanel.add(targetUrlField, gbc);
+
+        apiDiscoveryPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        apiDiscoveryPanel.add(new JLabel("API 发现:"));
+        apiDiscoveryPanel.add(discoverFromJsCheck);
+        apiDiscoveryPanel.add(discoverFromSwaggerCheck);
+        apiDiscoveryPanel.add(discoverBtn);
+
+        buttonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
+        sessionChooser.setPrototypeDisplayValue("Session (user1)");
+        buttonsPanel.add(crawlClickBtn);
+        buttonsPanel.add(clearLogBtn);
+        buttonsPanel.add(clearTableBtn);
+        buttonsPanel.add(new JLabel("Session:"));
+        buttonsPanel.add(sessionChooser);
+
+        if (!mergedMode) {
+            JPanel form = new JPanel();
+            form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
+            form.add(originalSectionPanel);
+            form.add(Box.createVerticalStrut(6));
+            form.add(targetUrlSectionPanel);
+            form.add(Box.createVerticalStrut(6));
+            form.add(apiDiscoveryPanel);
+            add(form, BorderLayout.CENTER);
+            add(buttonsPanel, BorderLayout.SOUTH);
+        }
+        setPreferredSize(new Dimension(460, 0));
+    }
+
+    JPanel getOriginalSectionPanel() { return originalSectionPanel; }
+    JPanel getTargetUrlSectionPanel() { return targetUrlSectionPanel; }
+    JPanel getApiDiscoveryPanel() { return apiDiscoveryPanel; }
+    JPanel getButtonsPanel() { return buttonsPanel; }
+
+    boolean isDiscoverFromJsSelected() { return discoverFromJsCheck.isSelected(); }
+    boolean isDiscoverFromSwaggerSelected() { return discoverFromSwaggerCheck.isSelected(); }
+
+    /* --- 对外API（主面板来读/写/监听） --- */
+    String getTargetUrl() { return targetUrlField.getText(); }
+    String getHeadersToReplaceText() { return headersToReplaceText.getText(); }
+    void setHeadersToReplaceText(String text) { headersToReplaceText.setText(text != null ? text : ""); }
 
     void setSessions(List<String> names) {
         sessionChooser.removeAllItems();
@@ -82,9 +129,11 @@ class ControlsPanel extends JPanel {
         return o == null ? "(no session)" : o.toString();
     }
 
-    void onStartAutomation(ActionListener l) { startAutomationBtn.addActionListener(l); }
-    void onToggleDriver(ActionListener l)    { startDriverBtn.addActionListener(l); }
     void onCrawl(ActionListener l)           { crawlClickBtn.addActionListener(l); }
+    void onDiscover(ActionListener l)         { discoverBtn.addActionListener(l); }
+    /** 程序化触发抓取（如 Run2 后自动执行） */
+    void triggerCrawl()                     { crawlClickBtn.doClick(); }
+    void onClearTable(ActionListener l)      { clearTableBtn.addActionListener(l); }
     void onSessionChanged(ActionListener l)  { sessionChooser.addActionListener(l); }
     void onClearLog(ActionListener l)        { clearLogBtn.addActionListener(l); }
 }

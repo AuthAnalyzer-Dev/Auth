@@ -2,22 +2,25 @@ package burp;
 
 import java.awt.Component;
 import javax.swing.JFrame;
+import javax.swing.JPanel;
 import javax.swing.JMenu;
 import javax.swing.JMenuBar;
 import javax.swing.JTabbedPane;
 import javax.swing.SwingUtilities;
 import com.protect7.authanalyzer.controller.HttpListener;
-import com.protect7.authanalyzer.gui.main.MainPanel;
 import com.protect7.authanalyzer.gui.util.AuthAnalyzerMenu;
 import com.protect7.authanalyzer.util.DataStorageProvider;
 import com.protect7.authanalyzer.util.GenericHelper;
 import com.protect7.authanalyzer.util.Globals;
 
-import com.protect7.authanalyzer.gui.UITesting.UITestingPanel; // ADDED
+import com.protect7.authanalyzer.gui.UITesting.MergedUITestingPanel;
+import com.protect7.authanalyzer.gui.Result.ResultPanel;
+import com.protect7.authanalyzer.gui.util.IAnalyzerHost;
+import com.protect7.authanalyzer.gui.util.TabVisibilityAware;
 
 public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListener {
 
-	public static MainPanel mainPanel;
+	public static IAnalyzerHost hostPanel;
 	private JMenu authAnalyzerMenu = null;
 	public static IBurpExtenderCallbacks callbacks;
 	public static JTabbedPane burpTabbedPane = null;
@@ -26,23 +29,54 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 	public void registerExtenderCallbacks(IBurpExtenderCallbacks callbacks) {
 		BurpExtender.callbacks = callbacks;
 		callbacks.setExtensionName(Globals.EXTENSION_NAME);
-		mainPanel = new MainPanel();
+		try {
+			burpTabbedPane = new JTabbedPane();
+			MergedUITestingPanel mergedPanel = new MergedUITestingPanel();
+			hostPanel = mergedPanel;
+			ResultPanel resultPanel = new ResultPanel();
+			burpTabbedPane.addTab("UI Testing", mergedPanel);
+			burpTabbedPane.addTab("Result", resultPanel);
 
-		// ADDED START
-		burpTabbedPane = new JTabbedPane();
-		burpTabbedPane.addTab("Analyzer", mainPanel);
-		burpTabbedPane.addTab("UI Testing", new UITestingPanel());
-		// ADDED END
+			SwingUtilities.invokeLater(() -> {
+				int idx = burpTabbedPane.getSelectedIndex();
+				if (idx == 0) {
+					((TabVisibilityAware) mergedPanel).onTabVisible();
+					((TabVisibilityAware) resultPanel).onTabHidden();
+				} else if (idx == 1) {
+					((TabVisibilityAware) mergedPanel).onTabHidden();
+					((TabVisibilityAware) resultPanel).onTabVisible();
+				}
+			});
 
-		callbacks.addSuiteTab(this);
-		addAuthAnalyzerMenu();
-		HttpListener httpListener = new HttpListener();
-		callbacks.registerHttpListener(httpListener);
-		callbacks.registerProxyListener(httpListener);
-		callbacks.registerExtensionStateListener(this);
-		callbacks.printOutput(Globals.EXTENSION_NAME + " successfully started");
-		callbacks.printOutput("Version " + Globals.VERSION);
-		callbacks.printOutput("Created by zmlad");
+			burpTabbedPane.addChangeListener(e -> {
+				int idx = burpTabbedPane.getSelectedIndex();
+				TabVisibilityAware ui = (TabVisibilityAware) mergedPanel;
+				TabVisibilityAware res = (TabVisibilityAware) resultPanel;
+				if (idx == 0) {
+					ui.onTabVisible();
+					res.onTabHidden();
+				} else if (idx == 1) {
+					ui.onTabHidden();
+					res.onTabVisible();
+				} else {
+					ui.onTabHidden();
+					res.onTabHidden();
+				}
+			});
+
+			callbacks.addSuiteTab(this);
+			addAuthAnalyzerMenu();
+			HttpListener httpListener = new HttpListener();
+			callbacks.registerHttpListener(httpListener);
+			callbacks.registerProxyListener(httpListener);
+			callbacks.registerExtensionStateListener(this);
+			callbacks.printOutput(Globals.EXTENSION_NAME + " successfully started");
+			callbacks.printOutput("Version " + Globals.VERSION);
+			callbacks.printOutput("Created by zmlad");
+		} catch (Exception e) {
+			callbacks.printError("Auth Analyzer failed to load: " + e.getMessage());
+			e.printStackTrace();
+		}
 	}
 
 	@Override
@@ -52,7 +86,7 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 
 	@Override
 	public Component getUiComponent() {
-		return (burpTabbedPane != null) ? burpTabbedPane : mainPanel; // ADDED (uses burpTabbedPane if present)
+		return (burpTabbedPane != null) ? burpTabbedPane : (hostPanel != null ? (Component) hostPanel : new JPanel());
 	}
 
 	private void addAuthAnalyzerMenu() {
@@ -76,12 +110,13 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 		if(authAnalyzerMenu != null && authAnalyzerMenu.getParent() != null) {
 			authAnalyzerMenu.getParent().remove(authAnalyzerMenu);
 		}
-		try {
-			mainPanel.getConfigurationPanel().createSessionObjects(false);
-			DataStorageProvider.saveSetup();
-		}
-		catch (Exception e) {
-			callbacks.printOutput("INFO: Session Setup not stored due to invalid data.");
+		if (hostPanel != null) {
+			try {
+				hostPanel.getConfigurationPanel().createSessionObjects(false);
+				DataStorageProvider.saveSetup();
+			} catch (Exception e) {
+				callbacks.printOutput("INFO: Session Setup not stored due to invalid data.");
+			}
 		}
 	}
 }

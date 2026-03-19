@@ -89,6 +89,9 @@ nbdist/
 # VS Code
 .vscode/
 
+# Cursor IDE
+.cursor/
+
 # -----------------------------
 # OS cruft
 # -----------------------------

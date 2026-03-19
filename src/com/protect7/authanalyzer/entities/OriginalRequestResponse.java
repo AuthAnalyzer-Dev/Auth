@@ -26,8 +26,14 @@ public class OriginalRequestResponse implements Comparable<OriginalRequestRespon
 		this.statusCode = statusCode;
 		this.responseContentLength = responseContentLength;
 	}
+	/**
+	 * endpointKey 用于 Run1/Run2 配对，同一 API 才配对。
+	 * 对 method/host 做规范化，避免插件、不同来源造成的格式差异导致相同 API 无法配对。
+	 */
 	public String getEndpoint() {
-		return method + host + url;
+		String m = method != null ? method.toUpperCase() : "";
+		String h = host != null ? host.toLowerCase() : "";
+		return m + h + url;
 	}
 	public int getId() {
 		return id;
