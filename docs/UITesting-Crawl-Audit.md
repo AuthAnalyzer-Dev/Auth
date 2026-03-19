@@ -62,6 +62,57 @@
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 2.1 全站 BFS 子页面遍历（新增能力）
+
+在单页抓取的基础上，引入「全站 BFS」遍历：将网站视为有向图，页面 URL 为节点，从 root URL 出发做广度优先搜索；每到一个页面节点，执行一次既有单页抓取，并在该页面上下文中进行隐藏 API 发现与送检。
+
+```
+rootUrl = controls.getTargetUrl()
+visitedPages = Set<canonicalUrl>
+queue = Queue<PageNode(url, depth)>
+
+queue.add(rootUrl)
+visitedPages.add(canonical(rootUrl))
+
+while queue not empty and processedPages < maxPages:
+  node = queue.poll()
+  if node.depth > maxDepth: continue
+
+  driver.get(node.url)
+  applyCookies(driver, node.url)
+
+  // 单页抓取（复用现有逻辑）
+  discoveredPages = crawlSinglePageAndCollectDiscoveredPages(driver, node.url, ...)
+
+  // 隐藏 API 发现与送检（按开关）
+  runDiscoveryAfterCrawl()
+  sendDiscoveredApisToAnalyzer(syncIfSymmetricCapture)
+
+  // BFS 扩展：将 discoveredPages 归一化、过滤后入队
+  for each url in discoveredPages:
+    if canonical(url) not in visitedPages and inScope(url):
+      visitedPages.add(canonical(url))
+      queue.add(PageNode(url, node.depth + 1))
+```
+
+**页面发现来源（两路合并）**：
+
+1. **DOM 链接扫描**：扫描 `a[href]` 并解析为绝对 URL，作为候选子页面（用于覆盖“无需点击即可发现的链接”）。
+2. **真实跳转捕获**：单页抓取中点击元素后若 `driver.getCurrentUrl()` 发生变化，将跳转后的 URL 作为候选子页面（用于覆盖“必须点击才能到达的页面”）。
+
+**去重与防环**：
+
+- 页面级去重：对 URL 做归一化后进入 `visitedPages`（协议/域名小写、清理尾斜杠、排序 query 参数），防止环路与重复节点。
+- 导航级优化：若某个 `<a>` 的 href 解析后指向已访问页面，可跳过该点击，减少重复导航带来的无效请求。
+
+**与隐藏 API 发现的衔接（重要）**：
+
+- 发现端点会与其来源页面的 origin 绑定（protocol+host+port），送检时按 `origin + method + path (+ graphql operation)` 去重并按 origin 构造请求，避免跨页面/跨域误发请求导致漏检/误检。
+
+**与对称采集（Run1/Run2）的顺序保证（重要）**：
+
+- 对称采集开启时，隐藏 API 送检优先使用同步模式（`sendDiscoveredApisToAnalyzer(true)`），确保在当前 Run 内完成，避免异步队列跨 Run 写入导致 Bypass 判定串线。
+
 ---
 
 ## 三、核心概念
