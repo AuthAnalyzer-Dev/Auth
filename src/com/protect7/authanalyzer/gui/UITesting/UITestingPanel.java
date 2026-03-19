@@ -22,6 +22,8 @@ import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.time.Duration;
 
 import javax.swing.*;
@@ -34,13 +36,16 @@ import java.awt.event.ActionEvent;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class UITestingPanel extends JPanel implements TabVisibilityAware {
 
@@ -59,6 +64,8 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     protected final RequestTablePanel tablePanel = new RequestTablePanel();
     private final DetailPanel details = new DetailPanel();
     protected final DiscoveredApiListPanel discoveredApiListPanel = new DiscoveredApiListPanel();
+    private final Set<String> sentDiscoveredEndpointKeys = Collections.synchronizedSet(new HashSet<>());
+    private final Map<String, Set<String>> discoveredEndpointOrigins = new ConcurrentHashMap<>();
     private JSplitPane mainSplitPane;
 
     private javax.swing.Timer modelBinderTimer;
@@ -131,7 +138,11 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         wrap.setBorder(javax.swing.BorderFactory.createTitledBorder("发现的隐藏 API"));
         JPanel toolbar = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 4, 2));
         JButton clearDiscoveredBtn = new JButton("清空");
-        clearDiscoveredBtn.addActionListener(e -> discoveredApiListPanel.clear());
+        clearDiscoveredBtn.addActionListener(e -> {
+            discoveredApiListPanel.clear();
+            sentDiscoveredEndpointKeys.clear();
+            discoveredEndpointOrigins.clear();
+        });
         toolbar.add(clearDiscoveredBtn);
         wrap.add(toolbar, BorderLayout.NORTH);
         wrap.add(new JScrollPane(discoveredApiListPanel), BorderLayout.CENTER);
@@ -230,6 +241,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                             for (DiscoveredEndpoint ep : js) {
                                 if (!all.contains(ep)) all.add(ep);
                             }
+                            rememberEndpointOrigins(js, targetUrl);
                             final java.util.List<DiscoveredEndpoint> jsList = new java.util.ArrayList<>(all);
                             SwingUtilities.invokeLater(() -> {
                                 discoveredApiListPanel.setEndpoints(jsList);
@@ -251,6 +263,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                     for (DiscoveredEndpoint ep : swagger) {
                         if (!all.contains(ep)) all.add(ep);
                     }
+                    rememberEndpointOrigins(swagger, targetUrl);
                     final java.util.List<DiscoveredEndpoint> finalList = all;
                     SwingUtilities.invokeLater(() -> {
                         discoveredApiListPanel.setEndpoints(finalList);
@@ -275,6 +288,13 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 String targetPage = controls.getTargetUrl();
                 if (targetPage == null || targetPage.trim().isEmpty()) {
                     log("[Crawl] 请先配置 Target URL");
+                    return;
+                }
+
+                if (controls.isSiteBfsEnabled()) {
+                    runSiteBfsCrawl(driver, targetPage);
+                    log("[Crawl] 完成");
+                    afterCrawlComplete(true);
                     return;
                 }
 
@@ -408,11 +428,258 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         }, "Crawl-Click-Thread").start();
     }
 
+    private static final class PageNode {
+        final String url;
+        final int depth;
+        PageNode(String url, int depth) { this.url = url; this.depth = depth; }
+    }
+
+    private void runSiteBfsCrawl(WebDriver driver, String startUrl) throws Exception {
+        int maxPages = Math.max(1, controls.getSiteBfsMaxPages());
+        int maxDepth = Math.max(0, controls.getSiteBfsMaxDepth());
+        boolean sameOriginOnly = controls.isSameOriginOnly();
+        boolean syncSend = CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled();
+
+        String canonicalStart = canonicalizePageUrl(startUrl);
+        if (canonicalStart == null) {
+            log("[Crawl] 起始 URL 非法，无法开始 BFS");
+            return;
+        }
+        String startOrigin = getUrlOrigin(canonicalStart);
+        String startDomain = getDomainFromUrl(canonicalStart);
+
+        log("[Crawl] 全站 BFS：maxDepth=" + maxDepth + ", maxPages=" + maxPages
+                + (sameOriginOnly ? ", scope=同源" : ", scope=同根域"));
+
+        Queue<PageNode> q = new LinkedList<>();
+        Set<String> visitedPages = new HashSet<>();
+        q.add(new PageNode(canonicalStart, 0));
+        visitedPages.add(canonicalStart);
+
+        String originalTarget = controls.getTargetUrl();
+
+        int processed = 0;
+        while (!q.isEmpty() && processed < maxPages) {
+            PageNode node = q.poll();
+            if (node.depth > maxDepth) continue;
+
+            try {
+                SwingUtilities.invokeAndWait(() -> controls.setTargetUrl(node.url));
+            } catch (Exception ignore) {}
+
+            log("[Crawl] BFS 访问(" + processed + "/" + maxPages + ", depth=" + node.depth + "): " + node.url);
+
+            driver.get(node.url);
+            Thread.sleep(500);
+            applyCookies(driver, node.url, processed == 0);
+            driver.get(node.url);
+            Thread.sleep(500);
+            waitForPageReady(driver);
+
+            Set<String> discoveredPages = crawlSinglePageAndCollectDiscoveredPages(driver, node.url, startOrigin, startDomain, sameOriginOnly, visitedPages);
+
+            if (controls.isDiscoverFromJsSelected() || controls.isDiscoverFromSwaggerSelected()) {
+                runDiscoveryAfterCrawl();
+                sendDiscoveredApisToAnalyzer(syncSend);
+            }
+
+            for (String raw : discoveredPages) {
+                String canon = canonicalizePageUrl(raw);
+                if (canon == null) continue;
+                if (visitedPages.contains(canon)) continue;
+                if (!isPageUrlInScope(canon, startOrigin, startDomain, sameOriginOnly)) continue;
+                visitedPages.add(canon);
+                q.add(new PageNode(canon, node.depth + 1));
+                if (visitedPages.size() >= maxPages) break;
+            }
+
+            processed++;
+        }
+
+        try {
+            SwingUtilities.invokeAndWait(() -> controls.setTargetUrl(originalTarget));
+        } catch (Exception ignore) {}
+
+        log("[Crawl] 全站 BFS 完成：visitedPages=" + visitedPages.size() + ", sentHiddenApis=" + sentDiscoveredEndpointKeys.size());
+    }
+
+    private Set<String> crawlSinglePageAndCollectDiscoveredPages(WebDriver driver, String targetPage,
+            String startOrigin, String startDomain, boolean sameOriginOnly, Set<String> visitedPagesCanonical) throws InterruptedException {
+        String targetDomain = getDomainFromUrl(targetPage);
+        Set<String> discoveredPages = new LinkedHashSet<>();
+
+        Set<String> alreadyClicked = new HashSet<>();
+        Queue<List<String>> statesToExplore = new LinkedList<>();
+        Set<List<String>> exploredStates = new HashSet<>();
+        statesToExplore.add(new ArrayList<>());
+        int totalProcessed = 0;
+        final int maxTotalClicks = 500;
+
+        while (!statesToExplore.isEmpty() && totalProcessed < maxTotalClicks) {
+            List<String> targetStatePath = statesToExplore.poll();
+            if (exploredStates.contains(targetStatePath)) continue;
+            exploredStates.add(targetStatePath);
+
+            goToTargetState(driver, targetPage, targetStatePath);
+            waitForPageReady(driver);
+            Thread.sleep(300);
+            discoveredPages.addAll(collectCandidatePageUrlsFromDom(driver, targetPage, startOrigin, startDomain, sameOriginOnly));
+
+            LinkedHashMap<String, Void> clickableKeys = new LinkedHashMap<>();
+            collectClickableKeys(driver, targetDomain, clickableKeys);
+            LinkedHashSet<String> stateSwitchersFound = new LinkedHashSet<>();
+
+            for (String key : clickableKeys.keySet()) {
+                if (alreadyClicked.contains(key)) continue;
+                if (targetStatePath.contains(key)) continue;
+
+                tryDismissBlockingOverlays(driver);
+                WebElement el = null;
+                for (int r = 0; r <= FIND_RETRY_COUNT && el == null; r++) {
+                    if (r > 0) Thread.sleep(FIND_RETRY_MS);
+                    el = findClickableByKey(driver, key);
+                }
+                if (el == null) continue;
+
+                try {
+                    if (visitedPagesCanonical != null && key.startsWith("a|")) {
+                        try {
+                            String href = el.getAttribute("href");
+                            String abs = resolveToAbsoluteUrl(targetPage, href);
+                            String canon = canonicalizePageUrl(abs);
+                            if (canon != null && visitedPagesCanonical.contains(canon)) {
+                                alreadyClicked.add(key);
+                                continue;
+                            }
+                        } catch (Throwable ignore) { }
+                    }
+
+                    log("[Crawl] 点击: " + key);
+                    boolean clickedLogout = isLogoutKey(key);
+                    String urlBefore = driver.getCurrentUrl();
+                    String fpBefore = getPageContentFingerprint(driver);
+                    try {
+                        ((JavascriptExecutor) driver).executeScript("arguments[0].scrollIntoView({block:'center'});", el);
+                        Thread.sleep(100);
+                    } catch (Throwable scrollEx) { }
+                    ensureClickInSameTab(driver, el);
+                    Thread.sleep(600);
+                    alreadyClicked.add(key);
+                    totalProcessed++;
+
+                    String urlAfter = driver.getCurrentUrl();
+                    boolean urlChanged = urlAfter == null || urlBefore == null
+                            ? (urlAfter != urlBefore)
+                            : !normalizeUrlForCompare(urlAfter).equals(normalizeUrlForCompare(urlBefore));
+
+                    if (urlChanged) {
+                        if (urlAfter != null && isPageUrlInScope(urlAfter, startOrigin, startDomain, sameOriginOnly)) {
+                            discoveredPages.add(urlAfter);
+                        }
+                        if (clickedLogout) applyCookies(driver, targetPage);
+                    } else {
+                        Thread.sleep(SAME_PAGE_DOM_WAIT_MS);
+                        String fpAfter = getPageContentFingerprint(driver);
+                        if (hasSubstantiveDomChange(fpBefore, fpAfter)) {
+                            stateSwitchersFound.add(key);
+                        } else if (looksLikeTabOrStateSwitcher(el)) {
+                            stateSwitchersFound.add(key);
+                        }
+                    }
+                    goToTargetState(driver, targetPage, targetStatePath);
+                    waitForPageReady(driver);
+                    Thread.sleep(RETURN_PAGE_WAIT_MS);
+                } catch (Throwable t) {
+                    log("[Crawl] 点击失败: " + key + " -> " + (t.getMessage() != null ? t.getMessage() : ""));
+                    goToTargetState(driver, targetPage, targetStatePath);
+                    waitForPageReady(driver);
+                    Thread.sleep(RETURN_PAGE_WAIT_MS);
+                }
+            }
+
+            for (String sw : stateSwitchersFound) {
+                List<String> nextPath = new ArrayList<>(targetStatePath);
+                nextPath.add(sw);
+                if (!exploredStates.contains(nextPath)) {
+                    statesToExplore.add(nextPath);
+                    if (nextPath.size() == 1) log("[Crawl] 待探索状态: " + sw);
+                }
+            }
+        }
+
+        return discoveredPages;
+    }
+
+    private static String resolveToAbsoluteUrl(String baseUrl, String href) {
+        if (href == null) return null;
+        String h = href.trim();
+        if (h.isEmpty()) return null;
+        String lower = h.toLowerCase();
+        if (lower.startsWith("mailto:") || lower.startsWith("tel:") || lower.startsWith("data:") || lower.startsWith("blob:"))
+            return null;
+        if (lower.startsWith("javascript:") || lower.startsWith("#"))
+            return null;
+        try {
+            URL base = new URL(baseUrl);
+            URL resolved = new URL(base, h);
+            return resolved.toString();
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Set<String> collectCandidatePageUrlsFromDom(WebDriver driver, String baseUrl,
+            String startOrigin, String startDomain, boolean sameOriginOnly) {
+        Set<String> result = new LinkedHashSet<>();
+        try {
+            List<WebElement> anchors = driver.findElements(By.xpath("//a[@href]"));
+            for (WebElement a : anchors) {
+                try {
+                    String href = a.getAttribute("href");
+                    String abs = resolveToAbsoluteUrl(baseUrl, href);
+                    if (abs == null) continue;
+                    String canon = canonicalizePageUrl(abs);
+                    if (canon == null) continue;
+                    if (isPageUrlInScope(canon, startOrigin, startDomain, sameOriginOnly)) {
+                        result.add(canon);
+                    }
+                } catch (Throwable ignore) { }
+            }
+        } catch (Throwable ignore) { }
+        return result;
+    }
+
+    private void rememberEndpointOrigins(List<DiscoveredEndpoint> endpoints, String baseUrl) {
+        if (endpoints == null || endpoints.isEmpty()) return;
+        String origin = getUrlOrigin(baseUrl);
+        if (origin == null || origin.isEmpty()) return;
+        for (DiscoveredEndpoint ep : endpoints) {
+            String id = endpointIdentity(ep);
+            if (id == null) continue;
+            discoveredEndpointOrigins.computeIfAbsent(id, k -> ConcurrentHashMap.newKeySet()).add(origin);
+        }
+    }
+
+    private static String endpointIdentity(DiscoveredEndpoint ep) {
+        if (ep == null) return null;
+        String m = ep.getMethod();
+        String p = ep.getPath();
+        if (m == null || p == null) return null;
+        String op = ep.getGraphqlOperation();
+        String opType = ep.getGraphqlOperationType();
+        if (op != null && !op.isEmpty()) {
+            String t = (opType != null && !opType.isEmpty()) ? opType : "query";
+            return m + " " + p + " :: " + t + " " + op;
+        }
+        return m + " " + p;
+    }
+
     /** 抓取完成后回调，子类可覆盖以实现 Run2 等后续逻辑。在抓取线程中调用。 */
     protected void afterCrawlComplete(boolean success) {
         if (!success) return;
         runDiscoveryAfterCrawl();
-        sendDiscoveredApisToAnalyzer();
+        boolean sync = CurrentConfig.getCurrentConfig().isSymmetricCaptureEnabled();
+        sendDiscoveredApisToAnalyzer(sync);
     }
 
     /** 抓取完成后自动运行隐藏 API 发现（复用当前浏览器），避免漏检 */
@@ -464,6 +731,7 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         if (!discovered.isEmpty()) {
             try {
                 SwingUtilities.invokeAndWait(() -> discoveredApiListPanel.addEndpoints(discovered));
+                rememberEndpointOrigins(discovered, targetUrl);
                 log("[API 发现] 抓取后新发现 " + discovered.size() + " 个端点");
             } catch (Exception e) {
                 log("[API 发现] 更新面板失败: " + (e.getMessage() != null ? e.getMessage() : ""));
@@ -491,14 +759,32 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         RequestController rc = CurrentConfig.getCurrentConfig().getRequestController();
         int sent = 0;
         for (DiscoveredEndpoint ep : endpoints) {
-            IHttpRequestResponse rr = SyntheticRequestBuilder.buildAndExecute(ep, baseUrl, headers, this::log);
-            if (rr != null && rr.getRequest() != null) {
-                if (sync) {
-                    rc.analyze(rr);
-                } else {
-                    CurrentConfig.getCurrentConfig().performAuthAnalyzerRequest(rr);
+            String endpointId = endpointIdentity(ep);
+            if (endpointId == null) continue;
+            Set<String> origins = discoveredEndpointOrigins.get(endpointId);
+            if (origins == null || origins.isEmpty()) {
+                String fallbackOrigin = getUrlOrigin(baseUrl);
+                if (fallbackOrigin != null) {
+                    origins = new HashSet<>();
+                    origins.add(fallbackOrigin);
                 }
-                sent++;
+            }
+            if (origins == null || origins.isEmpty()) continue;
+
+            for (String origin : origins) {
+                if (origin == null || origin.isEmpty()) continue;
+                String sendKey = origin + "|" + endpointId;
+                if (sentDiscoveredEndpointKeys.contains(sendKey)) continue;
+                IHttpRequestResponse rr = SyntheticRequestBuilder.buildAndExecute(ep, origin + "/", headers, this::log);
+                if (rr != null && rr.getRequest() != null) {
+                    if (sync) {
+                        rc.analyze(rr);
+                    } else {
+                        CurrentConfig.getCurrentConfig().performAuthAnalyzerRequest(rr);
+                    }
+                    sent++;
+                    sentDiscoveredEndpointKeys.add(sendKey);
+                }
             }
         }
         if (sent > 0) {
@@ -942,6 +1228,8 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
             com.protect7.authanalyzer.gui.util.ICenterPanelFacade facade = CurrentConfig.getCenterPanelFacade();
             if (facade != null) facade.clearTable();
         };
+        sentDiscoveredEndpointKeys.clear();
+        discoveredEndpointOrigins.clear();
         if (config.isRunning()) {
             config.getAnalyzerThreadExecutor().execute(() ->
                 SwingUtilities.invokeLater(clear));
@@ -1090,6 +1378,79 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         String host = slash >= 0 ? tmp.substring(0, slash) : tmp;
         int colon = host.indexOf(':');
         return colon >= 0 ? host.substring(0, colon) : host;
+    }
+
+    private static String canonicalizePageUrl(String url) {
+        if (url == null) return null;
+        String s = url.trim();
+        if (s.isEmpty()) return null;
+        if (!s.toLowerCase().startsWith("http://") && !s.toLowerCase().startsWith("https://")) return null;
+        try {
+            URL u = new URL(s);
+            String protocol = u.getProtocol() != null ? u.getProtocol().toLowerCase() : "http";
+            String host = u.getHost() != null ? u.getHost().toLowerCase() : "";
+            int port = u.getPort();
+            boolean defaultPort = (port == -1) || (protocol.equals("http") && port == 80) || (protocol.equals("https") && port == 443);
+            String path = u.getPath() != null ? u.getPath() : "";
+            path = path.replaceAll("/+", "/");
+            if (path.isEmpty()) path = "/";
+            if (path.length() > 1 && path.endsWith("/")) path = path.substring(0, path.length() - 1);
+
+            String query = u.getQuery();
+            if (query != null && !query.isEmpty()) {
+                String[] parts = query.split("&");
+                java.util.Arrays.sort(parts);
+                StringBuilder q = new StringBuilder();
+                for (String p : parts) {
+                    if (p == null || p.isEmpty()) continue;
+                    if (q.length() > 0) q.append('&');
+                    q.append(p);
+                }
+                query = q.length() > 0 ? q.toString() : null;
+            } else {
+                query = null;
+            }
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(protocol).append("://").append(host);
+            if (!defaultPort) sb.append(':').append(port);
+            sb.append(path);
+            if (query != null) sb.append('?').append(query);
+            return sb.toString();
+        } catch (MalformedURLException e) {
+            return null;
+        }
+    }
+
+    private static String getUrlOrigin(String url) {
+        String canon = canonicalizePageUrl(url);
+        if (canon == null) return null;
+        try {
+            URL u = new URL(canon);
+            String protocol = u.getProtocol().toLowerCase();
+            String host = u.getHost().toLowerCase();
+            int port = u.getPort();
+            boolean defaultPort = (port == -1) || (protocol.equals("http") && port == 80) || (protocol.equals("https") && port == 443);
+            return protocol + "://" + host + (defaultPort ? "" : ":" + port);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean isPageUrlInScope(String url, String startOrigin, String startDomain, boolean sameOriginOnly) {
+        String canon = canonicalizePageUrl(url);
+        if (canon == null) return false;
+        return isCanonicalPageUrlInScope(canon, startOrigin, startDomain, sameOriginOnly);
+    }
+
+    private boolean isCanonicalPageUrlInScope(String canonicalUrl, String startOrigin, String startDomain, boolean sameOriginOnly) {
+        String origin = getUrlOrigin(canonicalUrl);
+        if (origin == null) return false;
+        if (sameOriginOnly) {
+            return startOrigin != null && startOrigin.equalsIgnoreCase(origin);
+        }
+        String domain = getDomainFromUrl(canonicalUrl);
+        return startDomain == null || domain == null || isSameRootDomain(domain, startDomain);
     }
 
     /** 获取父域（如 v.ruc.edu.cn -> .ruc.edu.cn），用于 access_token 等跨子域 Cookie */

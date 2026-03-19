@@ -32,6 +32,11 @@ class ControlsPanel extends JPanel {
     private final JButton clearLogBtn = new JButton("清空日志");
     private final JButton clearTableBtn = new JButton("清空表格");
 
+    private final JCheckBox siteBfsCheck = new JCheckBox("全站 BFS", false);
+    private final JCheckBox sameOriginOnlyCheck = new JCheckBox("同源", true);
+    private final JTextField maxDepthField = new JTextField("4", 3);
+    private final JTextField maxPagesField = new JTextField("30", 4);
+
     private final JCheckBox discoverFromJsCheck = new JCheckBox("从 JS 提取", true);
     private final JCheckBox discoverFromSwaggerCheck = new JCheckBox("从 Swagger 探测", true);
     private final JButton discoverBtn = new JButton("发现隐藏 API");
@@ -80,6 +85,12 @@ class ControlsPanel extends JPanel {
         buttonsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6));
         sessionChooser.setPrototypeDisplayValue("Session (user1)");
         buttonsPanel.add(crawlClickBtn);
+        buttonsPanel.add(siteBfsCheck);
+        buttonsPanel.add(sameOriginOnlyCheck);
+        buttonsPanel.add(new JLabel("深度"));
+        buttonsPanel.add(maxDepthField);
+        buttonsPanel.add(new JLabel("页数"));
+        buttonsPanel.add(maxPagesField);
         buttonsPanel.add(clearLogBtn);
         buttonsPanel.add(clearTableBtn);
         buttonsPanel.add(new JLabel("Session:"));
@@ -109,8 +120,14 @@ class ControlsPanel extends JPanel {
 
     /* --- 对外API（主面板来读/写/监听） --- */
     String getTargetUrl() { return targetUrlField.getText(); }
+    void setTargetUrl(String url) { targetUrlField.setText(url != null ? url : ""); }
     String getHeadersToReplaceText() { return headersToReplaceText.getText(); }
     void setHeadersToReplaceText(String text) { headersToReplaceText.setText(text != null ? text : ""); }
+
+    boolean isSiteBfsEnabled() { return siteBfsCheck.isSelected(); }
+    boolean isSameOriginOnly() { return sameOriginOnlyCheck.isSelected(); }
+    int getSiteBfsMaxDepth() { return parseIntOrDefault(maxDepthField.getText(), 4); }
+    int getSiteBfsMaxPages() { return parseIntOrDefault(maxPagesField.getText(), 30); }
 
     void setSessions(List<String> names) {
         sessionChooser.removeAllItems();
@@ -136,4 +153,13 @@ class ControlsPanel extends JPanel {
     void onClearTable(ActionListener l)      { clearTableBtn.addActionListener(l); }
     void onSessionChanged(ActionListener l)  { sessionChooser.addActionListener(l); }
     void onClearLog(ActionListener l)        { clearLogBtn.addActionListener(l); }
+
+    private static int parseIntOrDefault(String s, int def) {
+        if (s == null) return def;
+        try {
+            return Integer.parseInt(s.trim());
+        } catch (Exception e) {
+            return def;
+        }
+    }
 }
