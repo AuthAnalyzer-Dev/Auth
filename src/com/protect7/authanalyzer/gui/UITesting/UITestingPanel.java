@@ -112,7 +112,6 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
     private void initUI() {
         setLayout(new BorderLayout());
 
-        // 原来的中间部分：表格（左）和详情（右）
         JSplitPane center = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
                 tablePanel, details);
         center.setResizeWeight(0.55);
@@ -178,7 +177,6 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
         }
         config.setSymmetricRun2Mode(false);
     }
-
 
     private void wireEvents() {
         controls.onCrawl(this::onCrawlClick);
@@ -428,159 +426,6 @@ public class UITestingPanel extends JPanel implements TabVisibilityAware {
                 ex.printStackTrace(stderr);
             }
         }, "Crawl-Click-Thread").start();
-    }
-    // 在 UITestingPanel 类里加：
-    private static final class TeePrintWriter extends PrintWriter {
-        private final PrintWriter delegate;
-        private final java.util.function.Consumer<String> sink;
-        TeePrintWriter(PrintWriter delegate, java.util.function.Consumer<String> sink) {
-            super(delegate, true);
-            this.delegate = delegate;
-            this.sink = sink;
-        }
-        @Override public void println(String x) {
-            delegate.println(x);
-            try { sink.accept(x); } catch (Throwable ignored) {}
-        }
-    }
-
-    /**
-     * 新增：在选定 Session 上对选中 ORR 进行重放（替换 Cookie）
-     */
-    private void onReplayForSession(ActionEvent e) {
-        new Thread(() -> {
-            try {
-                OriginalRequestResponse orr = tablePanel.getSelectedORR();
-                if (orr == null) {
-                    SwingUtilities.invokeLater(() ->
-                            JOptionPane.showMessageDialog(this, "请先在表格中选择一条原始请求", "No selection", JOptionPane.WARNING_MESSAGE));
-                    return;
-                }
-
-                int idx = controls.getSelectedSessionIndex();
-                List<Session> sessions = CurrentConfig.getCurrentConfig().getSessions();
-                if (sessions == null || idx < 0 || idx >= sessions.size()) {
-                    SwingUtilities.invokeLater(() ->
-                            JOptionPane.showMessageDialog(this, "请先选择一个 Session", "No session", JOptionPane.WARNING_MESSAGE));
-                    return;
-                }
-                Session s = sessions.get(idx);
-
-                String tiupUid = controls.getTiupUid();
-                String sessionCookie = controls.getSessionStr();
-                log("[Replay] 开始重放 ORR " + orr.getId() + " 到 Session " + s.getName());
-
-                AnalyzerRequestResponse arr = Replayer.replayOriginalToSession(
-                        orr, s, tiupUid, sessionCookie, stdout, stderr);
-
-                if (arr != null) {
-                    log("[Replay] 重放完成，刷新详情视图。");
-                    SwingUtilities.invokeLater(this::refreshSelectedRowDetails);
-                } else {
-                    log("[Replay] 重放失败。");
-                }
-            } catch (Throwable t) {
-                log("[Replay] 出错: " + t.getMessage());
-                t.printStackTrace(stderr);
-            }
-        }, "Replay-Thread").start();
-    }
-
-    /**
-     * 新增：镜像模式功能
-     */
-    private void onMirrorMode(ActionEvent e) {
-        JButton btn = (JButton)e.getSource();
-        new Thread(() -> {
-            try {
-                if (!Replayer.isMirrorRunning()) {
-                    // 启动镜像模式
-                    log("[Mirror] 启动镜像模式...");
-
-                    // 确保主浏览器已启动
-                    WebDriver driverA = ProxyDriverManager.getDriver();
-                    if (driverA == null) {
-                        log("[Mirror] 启动主浏览器 A...");
-                        ProxyDriverManager.startDriver(true, PROXY_HOST, PROXY_PORT, false);
-                    }
-
-                    // 获取 B 账号的 cookie
-                    String tiupUid = controls.getTiupUid();
-                    String sessionCookie = controls.getSessionStr();
-
-                    // 启动镜像模式
-                    Replayer.startMirror(tiupUid, sessionCookie, PROXY_HOST, PROXY_PORT, false, stdout, stderr);
-
-                    SwingUtilities.invokeLater(() -> btn.setText("停止镜像模式"));
-                    log("[Mirror] 镜像模式已启动。请在主浏览器 A 中操作，浏览器 B 会自动镜像您的点击。");
-
-                } else {
-                    // 停止镜像模式
-                    log("[Mirror] 停止镜像模式...");
-                    Replayer.stopMirror(stdout);
-
-                    SwingUtilities.invokeLater(() -> btn.setText("启动镜像模式"));
-                }
-            } catch (Exception ex) {
-                log("[Mirror] 错误: " + ex.getMessage());
-                ex.printStackTrace(stderr);
-            }
-        }, "Mirror-Thread").start();
-    }
-
-    /**
-     * 新增：双重检测功能
-     */
-    private void onDualDetection(ActionEvent e) {
-        JButton btn = (JButton)e.getSource();
-        new Thread(() -> {
-            try {
-                if (!DualDetectionManager.isEnabled()) {
-                    // 启动双重检测
-                    log("[DualDetection] 启动双重检测...");
-
-                    // 确保两个浏览器都已启动
-                    WebDriver driverA = ProxyDriverManager.getDriver();
-                    WebDriver driverB = ProxyDriverManager.getMirrorDriver();
-
-                    if (driverA == null) {
-                        log("[DualDetection] 启动主浏览器 A...");
-                        ProxyDriverManager.startDriver(true, PROXY_HOST, PROXY_PORT, false);
-                    }
-
-                    if (driverB == null) {
-                        log("[DualDetection] 启动镜像浏览器 B...");
-                        ProxyDriverManager.startMirrorDriver(true, PROXY_HOST, PROXY_PORT, false);
-                    }
-
-                    // 设置日志输出
-                    DualDetectionManager.setLoggers(stdout, stderr);
-
-                    // 启用双重检测
-                    DualDetectionManager.enable();
-
-                    SwingUtilities.invokeLater(() -> btn.setText("停止双重检测"));
-                    log("[DualDetection] 双重检测已启动。请在两个浏览器中分别登录不同账号，然后点击相同的链接。");
-
-                } else {
-                    // 停止双重检测
-                    log("[DualDetection] 停止双重检测...");
-                    DualDetectionManager.disable();
-
-                    // 显示结果
-                    List<DualDetectionManager.ComparisonResult> results = DualDetectionManager.getResults();
-                    log("[DualDetection] 检测完成，共 " + results.size() + " 条结果：");
-                    for (DualDetectionManager.ComparisonResult r : results) {
-                        log("  " + r.toString());
-                    }
-
-                    SwingUtilities.invokeLater(() -> btn.setText("启动双重检测"));
-                }
-            } catch (Exception ex) {
-                log("[DualDetection] 错误: " + ex.getMessage());
-                ex.printStackTrace(stderr);
-            }
-        }, "DualDetection-Thread").start();
     }
 
     private static final class PageNode {

@@ -7,26 +7,17 @@ import org.openqa.selenium.chrome.ChromeOptions;
 
 public class ProxyDriverManager {
 
-    private static WebDriver driver;       // A 账号（主浏览器）
-    private static WebDriver mirrorDriver; // B 账号（镜像浏览器）
+    private static WebDriver driver;
 
     /**
-     * Start ChromeDriver for PRIMARY (A). If useProxy==true, all traffic will go through proxyHost:proxyPort.
+     * Start ChromeDriver. If useProxy==true, all traffic will go through proxyHost:proxyPort.
+     * Returns the WebDriver instance.
      */
     public static synchronized WebDriver startDriver(boolean useProxy, String proxyHost, int proxyPort, boolean headless) {
-        if (driver != null) return driver;
-        driver = createChrome(useProxy, proxyHost, proxyPort, headless, "BrowserA");
-        return driver;
-    }
+        if (driver != null) {
+            return driver;
+        }
 
-    /** New: start ChromeDriver for MIRROR (B). */
-    public static synchronized WebDriver startMirrorDriver(boolean useProxy, String proxyHost, int proxyPort, boolean headless) {
-        if (mirrorDriver != null) return mirrorDriver;
-        mirrorDriver = createChrome(useProxy, proxyHost, proxyPort, headless, "BrowserB");
-        return mirrorDriver;
-    }
-
-    private static ChromeDriver createChrome(boolean useProxy, String proxyHost, int proxyPort, boolean headless, String browserTag) {
         WebDriverManager.chromedriver().setup();
         ChromeOptions options = new ChromeOptions();
 
@@ -35,21 +26,22 @@ public class ProxyDriverManager {
         options.addArguments("--disable-dev-shm-usage");
         options.addArguments("--disable-gpu");
         options.addArguments("--remote-allow-origins=*");
-        options.setAcceptInsecureCerts(true);
-        options.addArguments("--ignore-certificate-errors");
+        options.setAcceptInsecureCerts(true); // accept insecure certs so Burp MITM won't break navigation
+        options.addArguments("--ignore-certificate-errors"); // tolerate certs
 
         if (headless) {
+            // modern headless flag
             options.addArguments("--headless=new");
         }
+
         if (useProxy) {
             String proxyArg = String.format("http://%s:%d", proxyHost, proxyPort);
             options.addArguments("--proxy-server=" + proxyArg);
         }
-        // Add custom user-agent to distinguish browsers
-        if (browserTag != null && !browserTag.isEmpty()) {
-            options.addArguments("--user-agent=Mozilla/5.0 (AuthAnalyzer-" + browserTag + ")");
-        }
-        return new ChromeDriver(options);
+
+        // create driver
+        driver = new ChromeDriver(options);
+        return driver;
     }
 
     public static synchronized WebDriver getDriver() {
@@ -65,19 +57,11 @@ public class ProxyDriverManager {
     }
 
     public static synchronized void stopDriver() {
-        try { if (driver != null) driver.quit(); } catch (Throwable ignored) {}
+        try {
+            if (driver != null) {
+                driver.quit();
+            }
+        } catch (Throwable ignored) {}
         driver = null;
-    }
-
-    /** New */
-    public static synchronized void stopMirrorDriver() {
-        try { if (mirrorDriver != null) mirrorDriver.quit(); } catch (Throwable ignored) {}
-        mirrorDriver = null;
-    }
-
-    /** New */
-    public static synchronized void stopAll() {
-        stopDriver();
-        stopMirrorDriver();
     }
 }
