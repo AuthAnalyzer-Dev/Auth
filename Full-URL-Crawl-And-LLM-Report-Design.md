@@ -56,14 +56,9 @@
 | `driver.findElements(By.xpath(...))` | `List<WebElement>` | 查找元素 |
 | `((JavascriptExecutor) driver).executeScript(script, args)` | `Object` | 执行 JS（如 DOM 指纹、scrollIntoView） |
 | `controls.getTargetUrl()` | `String` | 目标 URL |
-| `controls.setTargetUrl(url)` | - | 在全站 BFS 中切换当前节点页面 |
 | `controls.getHeadersToReplaceText()` | `String` | Cookie 等认证头 |
 | `controls.isDiscoverFromJsSelected()` | `boolean` | 是否勾选 JS 发现 |
 | `controls.isDiscoverFromSwaggerSelected()` | `boolean` | 是否勾选 Swagger 发现 |
-| `controls.isSiteBfsEnabled()` | `boolean` | 是否启用全站 BFS 抓取 |
-| `controls.isSameOriginOnly()` | `boolean` | BFS 范围：同源 / 同根域 |
-| `controls.getSiteBfsMaxDepth()` | `int` | BFS 最大深度 |
-| `controls.getSiteBfsMaxPages()` | `int` | BFS 最大页面数 |
 
 ### 1.4 下游 LLM 接入（待实现）
 
@@ -85,7 +80,7 @@
 
 ### 2.2 现状
 
-- **单页抓取 + 全站 BFS（已实现）**：`UITestingPanel` 以单页抓取为原子操作，同时支持「全站 BFS」模式：以 root URL 为起点遍历子页面，对每个页面执行既有抓取与隐藏 API 发现/送检流程。
+- **单页抓取**：`UITestingPanel` 当前以**单页**为原子操作，在 `targetPage` 上做状态探索（Tab 切换）和点击，不跨页面递归。
 - **Result 数据源**：`ResultTableModel` 从 `RequestTableModel` 过滤出 SAME/SIMILAR 条目，与 Analyzer、UI Testing 共享主表。
 - **数据导出**：`DataExporter` 支持 XML/HTML 导出，可复用其结构作为 LLM 输入格式参考。
 
@@ -133,16 +128,6 @@ currentPageCrawlResult: Set<String> // 当前页抓取到的新 URL（用于入�
 - 复用 `collectClickableKeys`、`ensureClickInSameTab`、`goToTargetState`、`performAuthAnalyzerRequest`。
 - 新增「URL 提取」：从 `IHttpRequestResponse` 的请求 URL、响应中的 `Location`、或 DOM 的 `a[href]` 提取。
 - 新增「跨页队列」：在 `afterCrawlComplete` 或主循环中，将新 URL 入队而非仅结束。
-
-#### 3.1.1 当前实现要点（对齐文档建议）
-
-当前版本已在 `UITestingPanel` 中落地全站 BFS，并补齐了文档中提到的关键约束，以避免与隐藏 API/对称采集发生冲突：
-
-- **BFS 队列与 visited 去重**：URL 归一化（协议/主机小写、清理尾斜杠、排序 query 参数）后进入 visited，防环且避免重复页面节点。
-- **子页面来源双通道**：同时使用「DOM 的 `a[href]` 扫描」与「点击后 URL 变化捕获」作为入队候选，提升覆盖率。
-- **范围控制**：支持「同源」与「同根域」两种范围，配合 `maxDepth/maxPages` 限制爬取规模。
-- **隐藏 API 送检的 origin 绑定**：发现端点时记录其来源 origin，送检时按 `origin + method + path (+ graphql operation)` 去重并按 origin 正确构造请求，避免跨页面/跨域误发请求导致漏检或误检。
-- **对称采集顺序保证**：对称采集开启时，隐藏 API 送检优先使用同步分析（`sendDiscoveredApisToAnalyzer(true)`），避免 Run1/Run2 串线影响 Bypass 判定。
 
 ### 3.2 Result 面板数据获取
 

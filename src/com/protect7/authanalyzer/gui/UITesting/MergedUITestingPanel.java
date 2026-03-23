@@ -138,7 +138,8 @@ public class MergedUITestingPanel extends UITestingPanel implements IAnalyzerHos
                 }
             });
         } else if (symmetric && run2Mode) {
-            sendDiscoveredApisToAnalyzer();
+            runDiscoveryAfterCrawl();
+            sendDiscoveredApisToAnalyzer(true);
         } else {
             super.afterCrawlComplete(true);
         }
