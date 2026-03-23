@@ -1,15 +1,18 @@
 package com.protect7.authanalyzer.gui.main;
 
 import java.awt.BorderLayout;
+
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JSplitPane;
 import javax.swing.border.EmptyBorder;
+
 import com.protect7.authanalyzer.controller.ContextMenuController;
+import com.protect7.authanalyzer.gui.util.IAnalyzerHost;
 
 import burp.BurpExtender;
 
-public class MainPanel extends JPanel {
+public class MainPanel extends JPanel implements IAnalyzerHost {
 
 	private static final long serialVersionUID = -8438576029794021570L;
 	private final ConfigurationPanel configurationPanel;
@@ -43,6 +46,11 @@ public class MainPanel extends JPanel {
 	}
 	
 	public CenterPanel getCenterPanel() {
+		return centerPanel;
+	}
+
+	@Override
+	public com.protect7.authanalyzer.gui.util.ICenterPanelFacade getCenterPanelFacade() {
 		return centerPanel;
 	}
 	

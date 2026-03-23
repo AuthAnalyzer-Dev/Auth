@@ -69,8 +69,9 @@ public class GenericHelper {
 	}
 	
 	public static void animateBurpExtensionTab() {
-		if(BurpExtender.mainPanel.getParent() != null && BurpExtender.mainPanel.getParent() instanceof JTabbedPane) {
-			JTabbedPane burpTabbedPane = (JTabbedPane) BurpExtender.mainPanel.getParent();
+		Component host = BurpExtender.hostPanel != null ? (Component) BurpExtender.hostPanel : null;
+		if(host != null && host.getParent() != null && host.getParent() instanceof JTabbedPane) {
+			JTabbedPane burpTabbedPane = (JTabbedPane) host.getParent();
 			for(int i=0; i<burpTabbedPane.getTabCount(); i++) {
 				if(burpTabbedPane.getTitleAt(i).equals(Globals.EXTENSION_NAME)) {
 					Color animationColor = new Color(240, 110, 0);

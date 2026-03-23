@@ -1,0 +1,9 @@
+# AuthAnalyzer 构建环境
+# 本项目为 Java/Maven 项目，需要 JDK 11+（Selenium 4.x 要求）和 Maven
+name: authanalyzer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - openjdk=11
+  - maven=3.9

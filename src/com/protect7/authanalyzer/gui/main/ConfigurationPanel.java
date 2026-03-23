@@ -1,6 +1,9 @@
 package com.protect7.authanalyzer.gui.main;
 
+import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
@@ -15,13 +18,18 @@ import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Scanner;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JCheckBox;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JToggleButton;
+import javax.swing.Timer;
+import javax.swing.event.TableModelEvent;
+import javax.swing.event.TableModelListener;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import com.google.gson.Gson;
@@ -53,6 +61,7 @@ import com.protect7.authanalyzer.gui.listener.DeleteSessionListener;
 import com.protect7.authanalyzer.gui.listener.NewSessionListener;
 import com.protect7.authanalyzer.gui.listener.RenameSessionListener;
 import com.protect7.authanalyzer.gui.util.HintCheckBox;
+import com.protect7.authanalyzer.gui.util.IAnalyzerHost;
 import com.protect7.authanalyzer.gui.util.SessionTabbedPane;
 import com.protect7.authanalyzer.util.CurrentConfig;
 import com.protect7.authanalyzer.util.DataStorageProvider;
@@ -78,10 +87,10 @@ public class ConfigurationPanel extends JPanel {
 	private final String PLAY_TEXT = "\u25b6";
 	private final SessionTabbedPane sessionTabbedPane = new SessionTabbedPane();
 	boolean sessionListChanged = true;
-	private final MainPanel mainPanel;
+	private final IAnalyzerHost host;
 
-	public ConfigurationPanel(MainPanel mainPanel) {
-		this.mainPanel = mainPanel;	
+	public ConfigurationPanel(IAnalyzerHost host) {
+		this.host = host;	
 		sessionTabbedPane.addNewSessionListener(new NewSessionListener() {
 			@Override
 			public void newSession() {
@@ -128,6 +137,8 @@ public class ConfigurationPanel extends JPanel {
 					sessionPanelMap.remove(title);
 					sessionTabbedPane.remove(getTabbedPaneIndexForTitle(title));
 					sessionTabbedPane.setSelectedIndex(0);
+					createSessionObjects(false);
+					notifyTableStructureChanged();
 				}
 			}
 		});
@@ -206,7 +217,7 @@ public class ConfigurationPanel extends JPanel {
 		dropOriginalButton.addActionListener(e -> dropOriginalButtonPressed());
 		dropOriginalButton.setEnabled(false);
 		
-		JButton settingsButton = new JButton("Settings");
+		settingsButton = new JButton("Settings");
 		settingsButton.addActionListener(e -> new SettingsDialog(this));
 
 		setLayout(new GridBagLayout());
@@ -248,20 +259,137 @@ public class ConfigurationPanel extends JPanel {
 		
 	}
 
+	private final JButton settingsButton;
+	private final JCheckBox symmetricCaptureCheckBox = new JCheckBox("对称采集", false);
+	private final JButton symmetricRun2Button = new JButton("对称采集 Run2");
+	private final JButton clearSymmetricButton = new JButton("清空对称数据");
+	private final JLabel symmetricRun2StatusLabel = new JLabel("");
+
+	private static final int MERGED_PANEL_WIDTH = 460;
+
+	/**
+	 * 构建合并布局：统一宽度、对齐、紧凑。
+	 */
+	public void buildMergedLayout(JPanel originalSection, JPanel targetUrlSection, JPanel apiDiscoveryPanel, JPanel buttonsPanel) {
+		removeAll();
+		JPanel analyzerRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+		analyzerRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+		analyzerRow.add(startStopButton);
+		analyzerRow.add(pauseButton);
+
+		dropOriginalButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+		settingsButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		JPanel analyzerSection = new JPanel();
+		analyzerSection.setLayout(new BoxLayout(analyzerSection, BoxLayout.Y_AXIS));
+		analyzerSection.setAlignmentX(Component.LEFT_ALIGNMENT);
+		analyzerSection.setBorder(new CompoundBorder(BorderFactory.createTitledBorder("Analyzer"), new EmptyBorder(3, 3, 3, 3)));
+		analyzerSection.add(analyzerRow);
+		analyzerSection.add(dropOriginalButton);
+		analyzerSection.add(settingsButton);
+
+		JPanel symmetricRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
+		symmetricRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+		symmetricCaptureCheckBox.setSelected(config.isSymmetricCaptureEnabled());
+		symmetricCaptureCheckBox.addActionListener(e -> {
+			config.setSymmetricCaptureEnabled(symmetricCaptureCheckBox.isSelected());
+			updateSymmetricRun2ButtonState();
+			host.onSymmetricCaptureToggled();
+			notifyTableStructureChanged();
+			try {
+				DataStorageProvider.saveSetup();
+			} catch (Exception ex) {
+				BurpExtender.callbacks.printOutput("Could not persist symmetric setting: " + ex.getMessage());
+			}
+		});
+		symmetricRun2Button.addActionListener(e -> symmetricRun2ButtonPressed());
+		clearSymmetricButton.addActionListener(e -> clearSymmetricButtonPressed());
+		symmetricRun2StatusLabel.setForeground(new java.awt.Color(180, 0, 0));
+		symmetricRun2StatusLabel.setFont(symmetricRun2StatusLabel.getFont().deriveFont(java.awt.Font.BOLD));
+		symmetricRow.add(symmetricCaptureCheckBox);
+		symmetricRow.add(symmetricRun2Button);
+		symmetricRow.add(clearSymmetricButton);
+		symmetricRow.add(symmetricRun2StatusLabel);
+		analyzerSection.add(symmetricRow);
+		updateSymmetricRun2ButtonState();
+
+		Timer bindTableTimer = new Timer(500, e -> {
+			com.protect7.authanalyzer.gui.util.RequestTableModel tm = config.getTableModel();
+			if (tm != null) {
+				tm.addTableModelListener(new TableModelListener() {
+					@Override
+					public void tableChanged(TableModelEvent ev) {
+						if (ev.getType() == TableModelEvent.INSERT || ev.getType() == TableModelEvent.UPDATE) {
+							javax.swing.SwingUtilities.invokeLater(() -> updateSymmetricRun2ButtonState());
+						}
+					}
+				});
+				((Timer) e.getSource()).stop();
+				updateSymmetricRun2ButtonState();
+			}
+		});
+		bindTableTimer.setRepeats(true);
+		bindTableTimer.start();
+
+		filterPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		originalSection.setBorder(new CompoundBorder(BorderFactory.createTitledBorder("Original"), new EmptyBorder(3, 3, 3, 3)));
+
+		JPanel merged = new JPanel();
+		merged.setLayout(new BoxLayout(merged, BoxLayout.Y_AXIS));
+		merged.setAlignmentX(Component.LEFT_ALIGNMENT);
+		merged.setMaximumSize(new Dimension(MERGED_PANEL_WIDTH, Integer.MAX_VALUE));
+		merged.add(analyzerSection);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(filterPanel);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(sessionTabbedPane);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(originalSection);
+		merged.add(Box.createVerticalStrut(6));
+		merged.add(targetUrlSection);
+		if (apiDiscoveryPanel != null) {
+			merged.add(Box.createVerticalStrut(4));
+			merged.add(apiDiscoveryPanel);
+		}
+		merged.add(Box.createVerticalStrut(4));
+		merged.add(buttonsPanel);
+
+		GridBagConstraints mgc = new GridBagConstraints();
+		mgc.anchor = GridBagConstraints.NORTHWEST;
+		mgc.fill = GridBagConstraints.BOTH;
+		mgc.weightx = 1;
+		mgc.weighty = 1;
+		mgc.gridx = 0;
+		mgc.gridy = 0;
+		add(merged, mgc);
+		revalidate();
+		repaint();
+	}
+
 	public void loadAutoStoredData() {
 		try {
 			String storedData = DataStorageProvider.loadSetup();
 			if(storedData != null) {
 				loadSetup(storedData);
-				mainPanel.updateDividerLocation();
+				host.updateDividerLocation();
 			}
 		} catch (Exception e) {
 			BurpExtender.callbacks.printOutput("Can not restore saved Data. Error Message: " + e.getMessage());
 		}
 		if(sessionTabbedPane.getTabCount() == 1) {
-			createSession("user1");
+			createDefaultSession("user1");
 		}
 		sessionTabbedPane.setSelectedIndex(0);
+		createSessionObjects(false);
+		notifyTableStructureChanged();
+	}
+
+	private void notifyTableStructureChanged() {
+		com.protect7.authanalyzer.gui.util.RequestTableModel tm = config.getTableModel();
+		if (tm != null) {
+			javax.swing.SwingUtilities.invokeLater(() -> tm.fireTableStructureChanged());
+		}
 	}
 	
 	public void saveSetup() {
@@ -311,7 +439,9 @@ public class ConfigurationPanel extends JPanel {
 						scanner.close();
 						sessionTabbedPane.removeAll();
 						loadSetup(jsonString);
-						mainPanel.updateDividerLocation();
+						createSessionObjects(false);
+						notifyTableStructureChanged();
+						host.updateDividerLocation();
 						JOptionPane.showMessageDialog(this, "Setup successfully loaded");
 					} catch (Exception e) {
 						BurpExtender.callbacks.printError("Error. Can not load setup from JSON file. " + e.getMessage());
@@ -328,6 +458,81 @@ public class ConfigurationPanel extends JPanel {
 		} else {
 			setDropOriginalRequest(true);
 		}
+	}
+
+	private void updateSymmetricRun2ButtonState() {
+		boolean hasData = config.getTableModel() != null && config.getTableModel().getRowCount() > 0;
+		boolean run2Mode = config.isSymmetricRun2Mode();
+		boolean enabled = config.isSymmetricCaptureEnabled() && !run2Mode
+				&& config.isRunning() && !sessionPanelMap.isEmpty() && hasData;
+		symmetricRun2Button.setEnabled(enabled);
+		symmetricRun2Button.setText(run2Mode ? "已进入 Run2" : "对称采集 Run2");
+		symmetricRun2Button.setToolTipText(run2Mode ? "当前为 Run2 模式，请用 Session1 的 Cookie 在第二个浏览器访问相同 API"
+				: (enabled ? "备份当前数据，交换 Original 与 Session1 配置，进入 Run2" : null));
+		symmetricRun2StatusLabel.setText(run2Mode ? "【Run2 模式】" : "");
+		symmetricRun2StatusLabel.setVisible(run2Mode);
+		clearSymmetricButton.setEnabled(config.isSymmetricCaptureEnabled()
+				&& config.getSymmetricTrafficStore() != null
+				&& (config.getSymmetricTrafficStore().getResponseACount() > 0
+						|| config.getSymmetricTrafficStore().getResponseBCount() > 0));
+	}
+
+	private void symmetricRun2ButtonPressed() {
+		if (performRun2Transition()) {
+			host.triggerRun2Crawl();
+			JOptionPane.showMessageDialog(this, "已进入 Run2 模式，抓取已启动。完成后在 Result 标签点击刷新查看 Bypass 状态。");
+		} else {
+			JOptionPane.showMessageDialog(this, "无法进入 Run2（需对称采集已勾选、未在 Run2、有 Session 且主表有数据）");
+		}
+	}
+
+	private void clearSymmetricButtonPressed() {
+		if (config.getSymmetricTrafficStore() != null) {
+			config.getSymmetricTrafficStore().clear();
+			if (config.getTrivialityChecker() != null) config.getTrivialityChecker().clearCache();
+			config.setSymmetricRun2Mode(false);
+			config.setCurrentOriginalHeaders(host.getOriginalHeadersToReplace() != null ? host.getOriginalHeadersToReplace() : "");
+			updateSymmetricRun2ButtonState();
+			JOptionPane.showMessageDialog(this, "对称数据已清空");
+		}
+	}
+
+	/**
+	 * 执行 Run2 切换：备份、交换配置、进入 Run2 模式。需在 EDT 调用。
+	 * @return true 表示成功，可继续触发 Run2 抓取
+	 */
+	public boolean performRun2Transition() {
+		if (!config.isSymmetricCaptureEnabled() || config.isSymmetricRun2Mode()) return false;
+		if (sessionPanelMap.isEmpty()) return false;
+		String firstSessionName = getSessionNames().isEmpty() ? null : getSessionNames().get(0);
+		if (firstSessionName == null) return false;
+		SessionPanel firstPanel = sessionPanelMap.get(firstSessionName);
+		if (firstPanel == null) return false;
+		try {
+			String origHeaders = host.getOriginalHeadersToReplace();
+			if (origHeaders == null) origHeaders = "";
+			String session1Headers = firstPanel.getHeadersToReplaceText();
+			if (session1Headers == null) session1Headers = "";
+			config.backupTableToSymmetricStore();
+			swapOriginalAndSession1(origHeaders, session1Headers, firstPanel);
+			config.setSymmetricRun2Mode(true);
+			config.setCurrentOriginalHeaders(session1Headers);
+			updateSymmetricRun2ButtonState();
+			notifyTableStructureChanged();
+			return true;
+		} catch (Exception e) {
+			BurpExtender.callbacks.printError("Run2 切换失败: " + e.getMessage());
+			return false;
+		}
+	}
+
+	/**
+	 * 交换 Original 与第一个 Session 的 headersToReplace 配置。
+	 */
+	public void swapOriginalAndSession1(String originalHeaders, String session1Headers, SessionPanel firstSessionPanel) {
+		host.setOriginalHeadersToReplace(session1Headers);
+		firstSessionPanel.setHeadersToReplaceText(originalHeaders);
+		createSessionObjects(false);
 	}
 
 	private void setDropOriginalRequest(boolean dropRequests) {
@@ -353,13 +558,21 @@ public class ConfigurationPanel extends JPanel {
 		}
 	}
 
+	/** 初始加载时创建默认 Session，不检查 doModify */
+	private SessionPanel createDefaultSession(String sessionName) {
+		if (sessionPanelMap.containsKey(sessionName)) return sessionPanelMap.get(sessionName);
+		SessionPanel sessionPanel = new SessionPanel(sessionName, host);
+		sessionTabbedPane.add(sessionName, sessionPanel);
+		sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
+		sessionPanelMap.put(sessionName, sessionPanel);
+		createSessionObjects(false);
+		notifyTableStructureChanged();
+		return sessionPanel;
+	}
+
 	private SessionPanel createSession(String sessionName) {
 		if (doModify()) {
-			SessionPanel sessionPanel = new SessionPanel(sessionName, mainPanel);
-			sessionTabbedPane.add(sessionName, sessionPanel);
-			sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
-			sessionPanelMap.put(sessionName, sessionPanel);
-			return sessionPanel;
+			return createDefaultSession(sessionName);
 		} else {
 			return null;
 		}
@@ -367,7 +580,7 @@ public class ConfigurationPanel extends JPanel {
 
 	private boolean doCloneSession(String newSessionName, SessionPanel sessionPanelToClone) {
 		if (doModify()) {
-			SessionPanel sessionPanel = new SessionPanel(newSessionName, mainPanel);
+			SessionPanel sessionPanel = new SessionPanel(newSessionName, host);
 			sessionPanel.setHeadersToReplaceText(sessionPanelToClone.getHeadersToReplaceText());
 			sessionPanel.setHeadersToRemoveText(sessionPanelToClone.getHeadersToRemoveText());
 			sessionPanel.setRemoveHeaders(sessionPanelToClone.isRemoveHeaders());
@@ -400,6 +613,8 @@ public class ConfigurationPanel extends JPanel {
 			sessionTabbedPane.add(newSessionName, sessionPanel);
 			sessionTabbedPane.setSelectedIndex(sessionTabbedPane.getTabCount() - 2);
 			sessionPanelMap.put(newSessionName, sessionPanel);
+			createSessionObjects(false);
+			notifyTableStructureChanged();
 			return true;
 		} else {
 			return false;
@@ -426,7 +641,7 @@ public class ConfigurationPanel extends JPanel {
 					"Change Session Setup", JOptionPane.OK_CANCEL_OPTION);
 			if (selection == JOptionPane.YES_OPTION) {
 				sessionListChanged = true;
-				mainPanel.getCenterPanel().clearTable();
+				host.getCenterPanelFacade().clearTable();
 				return true;
 			} else {
 				return false;
@@ -497,6 +712,7 @@ public class ConfigurationPanel extends JPanel {
 				setDropOriginalRequest(false);
 				config.setRunning(false);
 				startStopButton.setText(ANALYZER_STOPPED_TEXT);
+				updateSymmetricRun2ButtonState();
 			} else {
 				// Validate all defined Tokens first
 				boolean success = true;
@@ -522,17 +738,22 @@ public class ConfigurationPanel extends JPanel {
 					}
 
 					if(sessionListChanged) {
-						mainPanel.getCenterPanel().initCenterPanel();
+						host.getCenterPanelFacade().initCenterPanel();
 					}
 					sessionTabbedPane.setModifEnabled(false);
 					pauseButton.setEnabled(true);
 					dropOriginalButton.setEnabled(true);
 					config.setRunning(true);
+					if (config.isSymmetricCaptureEnabled() && !config.isSymmetricRun2Mode()) {
+						String h = host.getOriginalHeadersToReplace();
+						config.setCurrentOriginalHeaders(h != null ? h : "");
+					}
 					startStopButton.setText(ANALYZER_STARTED_TEXT);
 					sessionListChanged = false;
+					updateSymmetricRun2ButtonState();
 				}
 			}
-			mainPanel.updateDividerLocation();
+			host.updateDividerLocation();
 		}
 	}
 	
@@ -608,18 +829,26 @@ public class ConfigurationPanel extends JPanel {
 				sessionPanel.getStatusPanel().init(newSession);
 			}
 		}
+		notifyTableStructureChanged();
 	}
 
 	private void loadSetup(String jsonString) {
 		sessionPanelMap.clear();
 		sessionTabbedPane.removeAll();
+		JsonObject root = JsonParser.parseString(jsonString).getAsJsonObject();
+		if (root.get("symmetricCaptureEnabled") != null) {
+			boolean enabled = root.get("symmetricCaptureEnabled").getAsBoolean();
+			if (enabled && !host.supportsSymmetricCapture()) {
+				enabled = false;
+			}
+			config.setSymmetricCaptureEnabled(enabled);
+		}
 		// Load Sessions
-		JsonArray storedSessionsArray = JsonParser.parseString(jsonString).getAsJsonObject().get("sessions")
-				.getAsJsonArray();
+		JsonArray storedSessionsArray = root.get("sessions").getAsJsonArray();
 		for (JsonElement sessionEl : storedSessionsArray) {
 			JsonObject sessionObject = sessionEl.getAsJsonObject();
 			String sessionName = sessionObject.get("name").getAsString();
-			SessionPanel sessionPanel = new SessionPanel(sessionName, mainPanel);
+			SessionPanel sessionPanel = new SessionPanel(sessionName, host);
 			sessionPanel.setHeadersToReplaceText(sessionObject.get("headersToReplace").getAsString());
 			sessionPanel
 					.setFilterRequestsWithSameHeader(sessionObject.get("filterRequestsWithSameHeader").getAsBoolean());

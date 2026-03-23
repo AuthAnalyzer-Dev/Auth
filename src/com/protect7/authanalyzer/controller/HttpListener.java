@@ -1,8 +1,10 @@
 package com.protect7.authanalyzer.controller;
 
+import java.util.List;
 import com.protect7.authanalyzer.filter.RequestFilter;
 import com.protect7.authanalyzer.uitesting.runner.DualDetectionManager;
 import com.protect7.authanalyzer.util.CurrentConfig;
+import com.protect7.authanalyzer.util.IdentityMatcher;
 import burp.BurpExtender;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpListener;
@@ -33,6 +35,14 @@ public class HttpListener implements IHttpListener, IProxyListener {
 
 		if(config.isRunning() && (!messageIsRequest || (messageIsRequest && config.isDropOriginal() && toolFlag == IBurpExtenderCallbacks.TOOL_PROXY))) {
 			if(!isFiltered(toolFlag, messageInfo)) {
+				if (config.isSymmetricCaptureEnabled() && messageIsRequest) {
+					IRequestInfo reqInfo = BurpExtender.callbacks.getHelpers().analyzeRequest(messageInfo);
+					List<String> headers = reqInfo.getHeaders();
+					String currentOriginal = config.getCurrentOriginalHeaders();
+					if (!IdentityMatcher.requestMatchesHeaders(headers, currentOriginal)) {
+						return;
+					}
+				}
 				config.performAuthAnalyzerRequest(messageInfo);
 			}
 		}
