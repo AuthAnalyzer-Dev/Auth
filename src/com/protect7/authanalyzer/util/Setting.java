@@ -77,8 +77,12 @@ public class Setting {
 				"Respect Response Code to flag with Status SAME", null),
 		STATUS_SIMILAR_RESPONSE_CODE("true", Type.BOOLEAN, 
 				"(Condition 1) Respect Response Code to flag with Status SIMILAR", null),
-		STATUS_SIMILAR_RESPONSE_LENGTH("5", Type.INTEGER, 
-				"(Condition 2) Deviation of Content-Length in percent to flag with Status SIMILAR", new Range(1,100));
+		STATUS_SIMILAR_RESPONSE_LENGTH("5", Type.INTEGER,
+				"(Condition 2) Deviation of Content-Length in percent to flag with Status SIMILAR", new Range(1,100)),
+		AI_BASE_URL("", Type.STRING, "AI API Base URL (OpenAI-compatible)", null),
+		AI_API_KEY("", Type.STRING, "AI API Key", null),
+		AI_MODEL("gpt-4o", Type.STRING, "AI Model name", null),
+		AI_SYSTEM_PROMPT("", Type.STRING, "AI System Prompt (empty = use default)", null);
 		
 		private final String defaultValue;
 		private final Type type;

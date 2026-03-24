@@ -17,6 +17,7 @@ import com.protect7.authanalyzer.gui.UITesting.MergedUITestingPanel;
 import com.protect7.authanalyzer.gui.Result.ResultPanel;
 import com.protect7.authanalyzer.gui.util.IAnalyzerHost;
 import com.protect7.authanalyzer.gui.util.TabVisibilityAware;
+import com.protect7.authanalyzer.ai.AIAnalysisPanel;
 
 public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListener {
 
@@ -34,34 +35,39 @@ public class BurpExtender implements IBurpExtender, ITab, IExtensionStateListene
 			MergedUITestingPanel mergedPanel = new MergedUITestingPanel();
 			hostPanel = mergedPanel;
 			ResultPanel resultPanel = new ResultPanel();
+			AIAnalysisPanel aiPanel = new AIAnalysisPanel();
 			burpTabbedPane.addTab("UI Testing", mergedPanel);
 			burpTabbedPane.addTab("Result", resultPanel);
+			burpTabbedPane.addTab("AI Analysis", aiPanel);
 
 			SwingUtilities.invokeLater(() -> {
 				int idx = burpTabbedPane.getSelectedIndex();
 				if (idx == 0) {
 					((TabVisibilityAware) mergedPanel).onTabVisible();
 					((TabVisibilityAware) resultPanel).onTabHidden();
+					((TabVisibilityAware) aiPanel).onTabHidden();
 				} else if (idx == 1) {
 					((TabVisibilityAware) mergedPanel).onTabHidden();
 					((TabVisibilityAware) resultPanel).onTabVisible();
+					((TabVisibilityAware) aiPanel).onTabHidden();
+				} else if (idx == 2) {
+					((TabVisibilityAware) mergedPanel).onTabHidden();
+					((TabVisibilityAware) resultPanel).onTabHidden();
+					((TabVisibilityAware) aiPanel).onTabVisible();
 				}
 			});
 
 			burpTabbedPane.addChangeListener(e -> {
 				int idx = burpTabbedPane.getSelectedIndex();
-				TabVisibilityAware ui = (TabVisibilityAware) mergedPanel;
+				TabVisibilityAware ui  = (TabVisibilityAware) mergedPanel;
 				TabVisibilityAware res = (TabVisibilityAware) resultPanel;
-				if (idx == 0) {
-					ui.onTabVisible();
-					res.onTabHidden();
-				} else if (idx == 1) {
-					ui.onTabHidden();
-					res.onTabVisible();
-				} else {
-					ui.onTabHidden();
-					res.onTabHidden();
-				}
+				TabVisibilityAware ai  = (TabVisibilityAware) aiPanel;
+				ui.onTabHidden();
+				res.onTabHidden();
+				ai.onTabHidden();
+				if (idx == 0)      ui.onTabVisible();
+				else if (idx == 1) res.onTabVisible();
+				else if (idx == 2) ai.onTabVisible();
 			});
 
 			callbacks.addSuiteTab(this);
